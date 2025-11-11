@@ -25,6 +25,11 @@ class TargetEncoding(Enum):
     stacks = 0,
     wyile = 1
 
+@dataclass
+class DatasetDistribution:
+    train_samples: list[str]
+    val_samples: list[str]
+    test_samples: list[str]
 
 @dataclass
 class CTCModelConfig:
@@ -79,7 +84,7 @@ def read_ocr_model_config(config_file: str):
     return checkpoint, architecture, encoder, input_width, input_height, charset
 
 
-def read_distribution(distribution_file: str):
+def read_distribution(distribution_file: str) -> DatasetDistribution | None:
     with open(distribution_file, "r", encoding="utf-8") as f:
         content = f.read()
         content = json.loads(content)
@@ -89,11 +94,12 @@ def read_distribution(distribution_file: str):
             valid_samples = content["validation"]
             test_samples = content["test"]
 
+            train_distribution = DatasetDistribution(train_samples=train_samples, val_samples=valid_samples, test_samples=test_samples)
 
-            return train_samples, valid_samples, test_samples
+            return train_distribution
         else:
             logging.error("Data distribution is missing the required keys 'train' and 'validation' and 'test'.")
-            return None, None, None
+            return None
       
 
 def build_data_paths(data_root: str) -> Tuple[list[str], List[str]]:
@@ -204,7 +210,7 @@ def build_distribution_from_directory(data_dir: str) -> Dict:
         validate_split(all_valid_images, all_valid_labels)
         validate_split(all_test_images, all_test_labels)
 
-    save_distribution(all_train_images, all_valid_images, all_test_images, output_dir=data_path)
+    save_distribution(all_train_images, all_valid_images, all_test_images, output_dir=str(data_path))
 
     distribution = {}
     distribution["train_images"] = all_train_images
@@ -217,7 +223,7 @@ def build_distribution_from_directory(data_dir: str) -> Dict:
     return distribution
 
 
-def accumulate_distributions(data_path: str, datasets: List[str]):
+def accumulate_distributions(data_path: str, datasets: List[str]) -> dict[str, list[str]] | None:
     all_train_images = []
     all_train_labels = []
 
@@ -235,11 +241,14 @@ def accumulate_distributions(data_path: str, datasets: List[str]):
         assert os.path.isdir(sub_dir)
         assert os.path.isfile(distr_file)
 
-        train_samples, valid_samples, test_samples = read_distribution(distr_file)
+        data_distribution = read_distribution(distr_file)
 
-        train_images, train_labels = build_distribution_paths(sub_dir, train_samples)
-        val_images, val_labels = build_distribution_paths(sub_dir, valid_samples)
-        test_images, test_labels = build_distribution_paths(sub_dir, test_samples)
+        if data_distribution is None:
+            return None
+
+        train_images, train_labels = build_distribution_paths(sub_dir, data_distribution.train_samples)
+        val_images, val_labels = build_distribution_paths(sub_dir, data_distribution.val_samples)
+        test_images, test_labels = build_distribution_paths(sub_dir, data_distribution.test_samples)
 
 
         all_train_images.extend(train_images)
@@ -266,12 +275,15 @@ def accumulate_distributions(data_path: str, datasets: List[str]):
     return distribution
 
 
-def build_distribution_from_file(distribution_file: str, data_root: str) -> Dict:
-    train_samples, valid_samples, test_samples = read_distribution(distribution_file)
+def build_distribution_from_file(distribution_file: str, data_root: str) -> dict[str, str] | None:
+    data_distribution = read_distribution(distribution_file)
 
-    train_images, train_labels = build_distribution_paths(data_root, train_samples)
-    val_images, val_labels = build_distribution_paths(data_root, valid_samples)
-    test_images, test_labels = build_distribution_paths(data_root, test_samples)
+    if data_distribution is None:
+        return None
+
+    train_images, train_labels = build_distribution_paths(data_root, data_distribution.train_samples)
+    val_images, val_labels = build_distribution_paths(data_root, data_distribution.val_samples)
+    test_images, test_labels = build_distribution_paths(data_root, data_distribution.test_samples)
 
     distribution = {}
     distribution["train_images"] = train_images
@@ -342,7 +354,7 @@ def shuffle_data(images: list[str], labels: list[str]) -> Tuple[list[str], list[
 
 
 def binarize(
-    image: npt.NDArray, adaptive: bool = True, block_size: int = 51, c: int = 13
+    image: npt.NDArray | cv2.typing.MatLike, adaptive: bool = True, block_size: int = 51, c: int = 13
 ) -> npt.NDArray:
     if len(image.shape) == 3:
         image = cv2.cvtColor(image, cv2.COLOR_RGB2GRAY)

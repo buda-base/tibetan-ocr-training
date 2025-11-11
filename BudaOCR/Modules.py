@@ -4,21 +4,25 @@ import torch
 import json
 import random
 import pyewts
-from torch import nn
-from tqdm import tqdm
-from evaluate import load
+import pyctcdecode.decoder as CTCDecoder
 
-from datetime import datetime
-import torch.nn.functional as F
 from abc import ABC, abstractmethod
+from evaluate import load
+from datetime import datetime
+from tqdm import tqdm
+from typing import Optional
+
+from albumentations.core.composition import Compose
+
+# torch imports
+from torch import nn
+import torch.nn.functional as F
 from torch.utils.data import Dataset
 from torch.utils.data import DataLoader
-from typing import List, Optional, Tuple
-from albumentations.core.composition import Compose
+
 from botok import tokenize_in_stacks, normalize_unicode
 from BudaOCR.Models import Easter2, VanillaCRNN
 from BudaOCR.Augmentations import train_transform
-from pyctcdecode import build_ctcdecoder
 
 from BudaOCR.Utils import (
     create_dir,
@@ -33,25 +37,26 @@ from BudaOCR.Utils import (
 )
 
 class LabelEncoder(ABC):
-    def __init__(self, charset: str | List[str], name: str):
+    def __init__(self, charset: str | list[str], name: str):
         self.name = name
         
         if isinstance(charset, str):
             self._charset = [x for x in charset]
 
-        elif isinstance(charset, List):
+        elif isinstance(charset, list):
             self._charset = charset
             
         self.ctc_vocab = self._charset.copy()
         self.ctc_vocab.insert(0, " ")
-        self.ctc_decoder = build_ctcdecoder(self.ctc_vocab)
+        #self.ctc_decoder = build_ctcdecoder(self.ctc_vocab)
+        self.ctc_decoder = CTCDecoder.build_ctcdecoder(self.ctc_vocab)
 
     @abstractmethod
     def read_label(self, label_path: str):
         raise NotImplementedError
     
     @property
-    def charset(self) -> List[str]:
+    def charset(self) -> list[str]:
         return self._charset
     
     @property
@@ -68,7 +73,7 @@ class LabelEncoder(ABC):
                 print("WARNING: {x} not in charset")
         return enc_lbl
 
-    def decode(self, inputs: List[int]) -> str:
+    def decode(self, inputs: list[int]) -> str:
         return "".join(self._charset[x-1] for x in inputs)
     
     def ctc_decode(self, logits):
@@ -76,7 +81,7 @@ class LabelEncoder(ABC):
     
 
 class StackEncoder(LabelEncoder):
-    def __init__(self, charset: List[str]):
+    def __init__(self, charset: list[str]):
         super().__init__(charset, "stack")
 
     def read_label(self, label_path: str, normalize: bool = True):
@@ -138,11 +143,14 @@ class CTCDataset(Dataset):
 
     def __getitem__(self, index):
         image = cv2.imread(self.images[index])
-        if image is None:
-            print(f"error reading image: {self.images[index]}")
-              # grayscale
-        image = binarize(image)
         
+        if image is None:
+            Exception(f"error reading image: {self.images[index]}")
+            return None
+            
+        else:
+            image = binarize(image)
+                
         if self.augmentations is not None:
             aug = self.augmentations(image=image)
 
@@ -191,7 +199,7 @@ class CTCNetwork(ABC):
         self.num_classes = 80
         self.model = model
         self.ctc_type = ctc_type
-        self.criterion = nn.CTCLoss(blank=0, reduction="sum", zero_infinity=True) if self.ctc_type == "default" else CustomCTC()
+        self.criterion = nn.CTCLoss(blank=0, reduction="sum", zero_infinity=True)
         self.optimizer = torch.optim.Adam(self.model.parameters())
 
     def full_train(self):
@@ -199,7 +207,7 @@ class CTCNetwork(ABC):
             param.requires_grad = True
 
     @abstractmethod
-    def get_input_shape(self) -> List[int]:
+    def get_input_shape(self) -> list[int]:
         raise NotImplementedError
 
     @abstractmethod
@@ -207,11 +215,11 @@ class CTCNetwork(ABC):
         raise NotImplementedError
     
     @abstractmethod
-    def forward(self, data: Tuple):
+    def forward(self, data: tuple):
         raise NotImplementedError
 
     @abstractmethod
-    def test(self, data: Tuple, all_data: bool) -> Tuple[List, List]:
+    def test(self, data: tuple, all_data: bool) -> tuple[list, list]:
         raise NotImplementedError
     
     def evaluate(self, data_loader, silent: bool):
@@ -260,7 +268,7 @@ class CTCNetwork(ABC):
         self.model.load_state_dict(checkpoint['state_dict'])
         self.optimizer.load_state_dict(checkpoint['optimizer'])
 
-    def export_onnx(self, out_dir: str, model_name: str = "model", opset: int = 17) -> None:
+    def export_onnx(self, out_dir: str, model_name: str = "model", opset: int = 18) -> None:
         self.model.eval()
 
         model_input = torch.randn(self.get_input_shape(), device=self.device)
@@ -274,11 +282,12 @@ class CTCNetwork(ABC):
 
         torch.onnx.export(
             self.model,
-            model_input,
+            model_input, # type: ignore
             out_file,
             export_params=True,
             opset_version=opset,
             verbose=False,
+            dynamo=False,
             do_constant_folding=True,
             input_names=["input"],
             output_names=["output"],
@@ -324,7 +333,7 @@ class EasterNetwork(CTCNetwork):
         self.criterion = nn.CTCLoss(
             blank=0,
             reduction=self.ctc_reduction,
-            zero_infinity=False) if self.ctc_type == "default" else CustomCTC()
+            zero_infinity=False)
         
         self.fine_tuning = False
 
@@ -453,11 +462,11 @@ class CRNNNetwork(CTCNetwork):
         self.criterion = nn.CTCLoss(
             blank=0,
             reduction=self.ctc_reduction, 
-            zero_infinity=False) if self.ctc_type == "default" else CustomCTC()
+            zero_infinity=False)
         
         super().__init__(self.model, self.ctc_type, self.architecture, self.image_width, self.image_height)
 
-    def get_input_shape(self) -> List[int]:
+    def get_input_shape(self) -> list[int]:
         return [1, 1, self.image_height, self.image_width]
     
 
@@ -490,7 +499,7 @@ class CRNNNetwork(CTCNetwork):
 
         return loss
     
-    def test(self, data: Tuple, all_data: bool = False):
+    def test(self, data: tuple, all_data: bool = False):
         self.model.eval()
 
         images, targets, target_lengths = data
@@ -660,7 +669,7 @@ class OCRTrainer:
     def init(self, image_paths: list[str], label_paths: list[str], train_split: float = 0.8, val_test_split: float = 0.5):
         images, labels = shuffle_data(image_paths, label_paths)
 
-        self.train_images, self.train_labels, self.valid_images, self.valid_labels, self.test_images, self.test_labels = split_dataset(images, labels)
+        self.train_images, self.train_labels, self.valid_images, self.valid_labels, self.test_images, self.test_labels = split_dataset(images, labels, train_split, val_test_split)
 
         print(
             f"Train Images: {len(self.train_images)}, Train Labels: {len(self.train_labels)}"
@@ -700,10 +709,6 @@ class OCRTrainer:
             test_it = [k for k in self.test_labels]
             self.test_labels  = [self.label_encoder.read_label(token) for token in tqdm(test_it)]
 
-            #self.train_labels = [self.label_encoder.read_label(x) for x in self.train_labels]
-            #self.valid_labels = [self.label_encoder.read_label(x) for x in self.valid_labels]
-            #self.test_labels = [self.label_encoder.read_label(x) for x in self.test_labels]
-
         self.train_dataset = CTCDataset(
             images=self.train_images,
             labels=self.train_labels,
@@ -731,7 +736,7 @@ class OCRTrainer:
 
     def get_dataloaders(self):
         self.train_loader = DataLoader(
-            dataset=self.train_dataset,
+            dataset=self.train_dataset, # type: ignore
             batch_size=self.batch_size,
             shuffle=True,
             collate_fn=ctc_collate_fn,
@@ -741,7 +746,7 @@ class OCRTrainer:
         )
 
         self.valid_loader = DataLoader(
-            dataset=self.valid_dataset,
+            dataset=self.valid_dataset, # type: ignore
             batch_size=self.batch_size,
             shuffle=True,
             collate_fn=ctc_collate_fn,
@@ -751,7 +756,7 @@ class OCRTrainer:
         )
 
         self.test_loader = DataLoader(
-            dataset=self.test_dataset,
+            dataset=self.test_dataset, # type: ignore
             batch_size=self.batch_size,
             shuffle=False,
             collate_fn=ctc_collate_fn,
@@ -835,7 +840,7 @@ class OCRTrainer:
                 epoch_train_loss = 0
                 tot_train_count = 0
 
-                for _, data in tqdm(enumerate(self.train_loader), total=len(self.train_loader)):
+                for _, data in tqdm(enumerate(self.train_loader), total=len(self.train_loader)): # type: ignore
                     train_loss = self.network.train(data)
                     epoch_train_loss += train_loss
                     tot_train_count += self.batch_size
@@ -882,7 +887,7 @@ class OCRTrainer:
                         return
                     
                 if check_cer:
-                    test_data = next(iter(self.test_loader))
+                    test_data = next(iter(self.test_loader)) # type: ignore
                     test_logits, gt_labels = self.network.test(test_data, all_data=False)
 
                     # that is a bit hacky, if more than 1 result is returned accumualte the results
@@ -928,7 +933,7 @@ class OCRTrainer:
         cer_scores = {}
         test_sample_idx = 0 # keeps track of the global test data index
 
-        for _, data in tqdm(enumerate(self.test_loader), total=len(self.test_loader)):
+        for _, data in tqdm(enumerate(self.test_loader), total=len(self.test_loader)): # type: ignore
             test_logits, gt_labels = self.network.test(data, all_data=True)
             
             for logits, label in zip(test_logits, gt_labels):
