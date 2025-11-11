@@ -1,193 +1,30 @@
 import os
-import cv2
-import torch
 import json
 import random
-import pyewts
-import pyctcdecode.decoder as CTCDecoder
 
 from abc import ABC, abstractmethod
 from evaluate import load
 from datetime import datetime
 from tqdm import tqdm
-from typing import Optional
 
-from albumentations.core.composition import Compose
 
 # torch imports
-from torch import nn
+import torch
 import torch.nn.functional as F
-from torch.utils.data import Dataset
+from torch import nn
 from torch.utils.data import DataLoader
 
-from botok import tokenize_in_stacks, normalize_unicode
+from BudaOCR.Datasets import CTCDataset, ctc_collate_fn
+from BudaOCR.Encoder import LabelEncoder
 from BudaOCR.Models import Easter2, VanillaCRNN
 from BudaOCR.Augmentations import train_transform
 
 from BudaOCR.Utils import (
     create_dir,
     split_dataset,
-    binarize,
-    preprocess_unicode,
     get_filename,
     shuffle_data,
-    pad_ocr_line,
-    postprocess_wylie_label,
-    preprocess_unicode
 )
-
-class LabelEncoder(ABC):
-    def __init__(self, charset: str | list[str], name: str):
-        self.name = name
-        
-        if isinstance(charset, str):
-            self._charset = [x for x in charset]
-
-        elif isinstance(charset, list):
-            self._charset = charset
-            
-        self.ctc_vocab = self._charset.copy()
-        self.ctc_vocab.insert(0, " ")
-        #self.ctc_decoder = build_ctcdecoder(self.ctc_vocab)
-        self.ctc_decoder = CTCDecoder.build_ctcdecoder(self.ctc_vocab)
-
-    @abstractmethod
-    def read_label(self, label_path: str):
-        raise NotImplementedError
-    
-    @property
-    def charset(self) -> list[str]:
-        return self._charset
-    
-    @property
-    def num_classes(self) -> int:
-        return len(self._charset)
-
-    def encode(self, label: str):
-        enc_lbl = []
-        for x in label:
-            if x in self._charset:
-                enc_lbl.append(self._charset.index(x)+1)
-            else:
-                enc_lbl.append(-1)
-                print("WARNING: {x} not in charset")
-        return enc_lbl
-
-    def decode(self, inputs: list[int]) -> str:
-        return "".join(self._charset[x-1] for x in inputs)
-    
-    def ctc_decode(self, logits):
-        return self.ctc_decoder.decode(logits).replace(" ", "")
-    
-
-class StackEncoder(LabelEncoder):
-    def __init__(self, charset: list[str]):
-        super().__init__(charset, "stack")
-
-    def read_label(self, label_path: str, normalize: bool = True):
-        f = open(label_path, "r", encoding="utf-8")
-        label = f.readline()
-
-        if normalize:
-            label = normalize_unicode(label)
-            
-        label = label.replace(" ", "")
-        label = preprocess_unicode(label)
-        stacks = tokenize_in_stacks(label)
-
-        return stacks
-    
-    def num_classes(self) -> int:
-        return len(self._charset)+1
-
-
-class WylieEncoder(LabelEncoder):
-    def __init__(self, charset: str):
-        super().__init__(charset, "wylie")
-        self.converter = pyewts.pyewts()
-
-    def read_label(self, label_path: str):
-        f = open(label_path, "r", encoding="utf-8")
-        label = f.readline()
-        label = preprocess_unicode(label)
-        label = self.converter.toWylie(label)
-        label = postprocess_wylie_label(label)
-
-        return label
-    
-    def num_classes(self) -> int:
-        return len(self._charset)+1
-
-
-class CTCDataset(Dataset):
-    def __init__(
-        self,
-        images: list,
-        labels: list,
-        label_encoder: LabelEncoder,
-        img_height: int = 80,
-        img_width: int = 2000,
-        augmentations: Optional[Compose] = None,
-    ):
-        super(CTCDataset, self).__init__()
-
-        self.images = images
-        self.labels = labels
-        self.img_height = img_height
-        self.img_width = img_width
-        self.label_encoder = label_encoder
-        self.augmentations = augmentations
- 
-    def __len__(self):
-        return len(self.images)
-
-    def __getitem__(self, index):
-        image = cv2.imread(self.images[index])
-        
-        if image is None:
-            Exception(f"error reading image: {self.images[index]}")
-            return None
-            
-        else:
-            image = binarize(image)
-                
-        if self.augmentations is not None:
-            aug = self.augmentations(image=image)
-
-            image = aug["image"]
-            image = cv2.cvtColor(image, cv2.COLOR_RGB2GRAY)
-        else:
-            image = cv2.cvtColor(image, cv2.COLOR_RGB2GRAY)
-
-        image = pad_ocr_line(
-            image, target_width=self.img_width, target_height=self.img_height
-        )
-        image = image.reshape((1, self.img_height, self.img_width))
-        image = (image / 127.5) - 1.0
-        image = torch.FloatTensor(image)
-
-        label = self.labels[index]
-        target = self.label_encoder.encode(label)
-        target_length = [len(target)]
-
-        target = torch.LongTensor(target)
-        target_length = torch.LongTensor(target_length)
-
-        return image, target, target_length
-
-
-def ctc_collate_fn(batch):
-    images, targets, target_lengths = zip(*batch)
-    images = torch.stack(images, 0)
-    targets = torch.cat(targets, 0)
-    target_lengths = torch.cat(target_lengths, 0)
-    return images, targets, target_lengths
-
-
-def ctc_collate_fn2(batch):
-    images, targets, target_lengths = zip(*batch)
-    images = torch.stack(images, 0)
-    return images, targets, target_lengths
 
 
 class CTCNetwork(ABC):
@@ -950,4 +787,74 @@ class OCRTrainer:
 
         return cer_scores
 
+"""
+Models: Easter2PlusLight with lightweight CNN and Self-Attention Head
+"""
+class CNNFrontEnd(nn.Module):
+    def __init__(self, in_channels=1, out_channels=64):
+        super().__init__()
+        self.features = nn.Sequential(
+            nn.Conv2d(in_channels, 32, kernel_size=3, stride=1, padding=1),
+            nn.ReLU(),
+            nn.MaxPool2d((2, 2)),
+            nn.Conv2d(32, out_channels, kernel_size=3, stride=1, padding=1),
+            nn.ReLU(),
+            nn.MaxPool2d((2, 1)),  # reduce height but not width
+        )
 
+    def forward(self, x):
+        x = self.features(x)
+        b, c, h, w = x.size()
+        x = x.view(b, c * h, w)  # convert to (B, H*C, W)
+        return x
+    
+class SelfAttention(nn.Module):
+    def __init__(self, dim, heads=4, attn_dim=None):
+        super().__init__()
+        attn_dim = attn_dim or dim
+        assert attn_dim % heads == 0, f"attn_dim {attn_dim} must be divisible by num_heads {heads}"
+
+        self.proj_in = nn.Linear(dim, attn_dim) if attn_dim != dim else nn.Identity()
+        self.attn = nn.MultiheadAttention(embed_dim=attn_dim, num_heads=heads, batch_first=True)
+        self.norm = nn.LayerNorm(attn_dim)
+        self.mlp = nn.Sequential(
+            nn.Linear(attn_dim, attn_dim * 4),
+            nn.GELU(),
+            nn.Linear(attn_dim * 4, attn_dim)
+        )
+        self.proj_out = nn.Linear(attn_dim, dim) if attn_dim != dim else nn.Identity()
+
+    def forward(self, x):
+        x = x.permute(0, 2, 1)       # (B, C, L) -> (B, L, C)
+        x = self.proj_in(x)
+        attn_out, _ = self.attn(x, x, x)
+        x = self.norm(x + attn_out)
+        x = self.norm(x + self.mlp(x))
+        x = self.proj_out(x)
+        return x.permute(0, 2, 1)    # (B, L, C) -> (B, C, L)
+
+class Easter2PlusLight(nn.Module):
+    """
+    A slightly enhanced version of the Easter2 architecture with the following feauters:
+    - a CNNFrontEnd to be more responsive to vertical features
+    - a lightweight Attention module replacing the GlobalContext module of the original implementation
+    - use an attention dim of e.g. 64, 96, or 128 depending on the compute budget
+    """
+    def __init__(self, vocab_size=80, attention_dim: int = 128, input_height=100):
+        super().__init__()
+        self.cnn_front = CNNFrontEnd(in_channels=1, out_channels=64)
+
+        # Probe CNN output shape once (no gradients)
+        with torch.no_grad():
+            dummy = torch.zeros(1, 1, input_height, 1000)
+            feat = self.cnn_front(dummy)
+            input_channels = feat.shape[1]
+
+        self.backbone = Easter2(input_channels=input_channels, vocab_size=vocab_size)
+        self.attention = SelfAttention(dim=vocab_size, heads=4, attn_dim=attention_dim)
+
+    def forward(self, x):
+        x = self.cnn_front(x)                 # BxCxL
+        logits, _ = self.backbone(x)          # BxVxL
+        x = self.attention(logits)
+        return x
