@@ -4,6 +4,9 @@ import cv2
 import json
 import logging
 import random
+
+import matplotlib.pyplot as plt
+
 from dataclasses import dataclass
 import numpy as np
 from glob import glob
@@ -44,6 +47,16 @@ class CTCModelConfig:
     swap_hw: bool
     charset: List[str]
 
+def show_image(
+    image: npt.NDArray, cmap: str = "", axis="off", fig_x: int = 24, fix_y: int = 13
+) -> None:
+    plt.figure(figsize=(fig_x, fix_y))
+    plt.axis(axis)
+
+    if cmap != "":
+        plt.imshow(image, cmap=cmap)
+    else:
+        plt.imshow(image)
 
 def create_dir(dir_path: str) -> None:
     try:
@@ -102,8 +115,8 @@ def read_distribution(distribution_file: str) -> DatasetDistribution | None:
             return None
       
 
-def build_data_paths(data_root: str) -> Tuple[list[str], List[str]]:
-    _images = natsorted(glob(f"{data_root}/lines/*.jpg"))
+def build_data_paths(data_root: str, img_file_ext: str = "jpg") -> Tuple[list[str], List[str]]:
+    _images = natsorted(glob(f"{data_root}/lines/*.{img_file_ext}"))
     _labels = natsorted(glob(f"{data_root}/transcriptions/*.txt"))
 
     return _images, _labels

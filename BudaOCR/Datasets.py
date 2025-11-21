@@ -9,6 +9,7 @@ from torch.utils.data import Dataset
 from BudaOCR.Encoder import LabelEncoder
 from BudaOCR.Utils import binarize, pad_ocr_line
 
+
 class CTCDataset(Dataset):
     def __init__(
         self,
@@ -27,20 +28,20 @@ class CTCDataset(Dataset):
         self.img_width = img_width
         self.label_encoder = label_encoder
         self.augmentations = augmentations
- 
+
     def __len__(self):
         return len(self.images)
 
     def __getitem__(self, index):
         image = cv2.imread(self.images[index])
-        
+
         if image is None:
             Exception(f"error reading image: {self.images[index]}")
             return None
-            
+
         else:
             image = binarize(image)
-                
+
         if self.augmentations is not None:
             aug = self.augmentations(image=image)
 
@@ -63,18 +64,12 @@ class CTCDataset(Dataset):
         target = torch.LongTensor(target)
         target_length = torch.LongTensor(target_length)
 
-        return image, target, target_length
+        return image, target, target_length, self.labels[index]
 
 
 def ctc_collate_fn(batch):
-    images, targets, target_lengths = zip(*batch)
+    images, targets, target_lengths, gt_labels = zip(*batch)
     images = torch.stack(images, 0)
     targets = torch.cat(targets, 0)
     target_lengths = torch.cat(target_lengths, 0)
-    return images, targets, target_lengths
-
-
-def ctc_collate_fn2(batch):
-    images, targets, target_lengths = zip(*batch)
-    images = torch.stack(images, 0)
-    return images, targets, target_lengths
+    return images, targets, target_lengths, gt_labels

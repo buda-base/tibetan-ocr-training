@@ -8,20 +8,20 @@ from BudaOCR.Utils import (
     normalize_unicode,
     tokenize_in_stacks,
     postprocess_wylie_label,
-    preprocess_unicode
+    preprocess_unicode,
 )
 
 
 class LabelEncoder(ABC):
     def __init__(self, charset: str | list[str], name: str):
         self.name = name
-        
+
         if isinstance(charset, str):
             self._charset = [x for x in charset]
 
         elif isinstance(charset, list):
             self._charset = charset
-            
+
         self.ctc_vocab = self._charset.copy()
         self.ctc_vocab.insert(0, " ")
         self.ctc_decoder = CTCDecoder.build_ctcdecoder(self.ctc_vocab)
@@ -29,11 +29,15 @@ class LabelEncoder(ABC):
     @abstractmethod
     def read_label(self, label_path: str):
         raise NotImplementedError
-    
+
     @property
     def charset(self) -> list[str]:
         return self._charset
-    
+
+    @property
+    def concat_charset(self) -> str:
+        return "".join(x for x in self._charset)
+
     @property
     def num_classes(self) -> int:
         return len(self._charset)
@@ -42,18 +46,18 @@ class LabelEncoder(ABC):
         enc_lbl = []
         for x in label:
             if x in self._charset:
-                enc_lbl.append(self._charset.index(x)+1)
+                enc_lbl.append(self._charset.index(x) + 1)
             else:
                 enc_lbl.append(-1)
                 print("WARNING: {x} not in charset")
         return enc_lbl
 
     def decode(self, inputs: list[int]) -> str:
-        return "".join(self._charset[x-1] for x in inputs)
-    
+        return "".join(self._charset[x - 1] for x in inputs)
+
     def ctc_decode(self, logits):
         return self.ctc_decoder.decode(logits).replace(" ", "")
-    
+
 
 class StackEncoder(LabelEncoder):
     def __init__(self, charset: list[str]):
@@ -65,15 +69,15 @@ class StackEncoder(LabelEncoder):
 
         if normalize:
             label = normalize_unicode(label)
-            
+
         label = label.replace(" ", "")
         label = preprocess_unicode(label)
         stacks = tokenize_in_stacks(label)
 
         return stacks
-    
+
     def num_classes(self) -> int:
-        return len(self._charset)+1
+        return len(self._charset) + 1
 
 
 class WylieEncoder(LabelEncoder):
@@ -89,6 +93,6 @@ class WylieEncoder(LabelEncoder):
         label = postprocess_wylie_label(label)
 
         return label
-    
+
     def num_classes(self) -> int:
-        return len(self._charset)+1
+        return len(self._charset) + 1

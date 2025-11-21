@@ -8,7 +8,7 @@ import os
 import argparse
 import numpy as np
 from BudaOCR.Config import CHARSET, STACK_FILE
-from BudaOCR.Modules import EasterNetwork, CRNNNetwork, OCRTrainer, WylieEncoder, StackEncoder
+from BudaOCR.Trainer import EasterNetwork, CRNNNetwork, OCRTrainer, WylieEncoder, StackEncoder
 from BudaOCR.Utils import create_dir, read_stack_file, build_distribution_from_file
 
 # disable albumentation update checks, there are issues with the latest version
