@@ -367,7 +367,7 @@ def shuffle_data(images: list[str], labels: list[str]) -> Tuple[list[str], list[
 
 
 def binarize(
-    image: npt.NDArray | cv2.typing.MatLike, adaptive: bool = True, block_size: int = 51, c: int = 13
+    image: npt.NDArray, adaptive: bool = True, block_size: int = 51, c: int = 13
 ) -> npt.NDArray:
     if len(image.shape) == 3:
         image = cv2.cvtColor(image, cv2.COLOR_RGB2GRAY)
