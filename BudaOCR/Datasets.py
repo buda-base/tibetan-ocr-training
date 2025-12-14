@@ -1,14 +1,14 @@
 import cv2
-from typing import Optional
-
-from albumentations.core.composition import Compose
-
 import torch
+
 from torch.utils.data import Dataset
+from typing import Optional, TYPE_CHECKING
 
 from BudaOCR.Encoder import LabelEncoder
 from BudaOCR.Utils import binarize, pad_ocr_line
 
+if TYPE_CHECKING:
+    from albumentations.core.composition import Compose
 
 class CTCDataset(Dataset):
     def __init__(
@@ -18,7 +18,7 @@ class CTCDataset(Dataset):
         label_encoder: LabelEncoder,
         img_height: int = 80,
         img_width: int = 2000,
-        augmentations: Optional[Compose] = None,
+        augmentations: Optional["Compose"] = None,
     ):
         super(CTCDataset, self).__init__()
 
