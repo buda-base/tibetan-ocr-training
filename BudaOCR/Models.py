@@ -806,3 +806,67 @@ class Easter2PlusLight(nn.Module):
         logits, _ = self.backbone(x)  # (B, V, T)
         x = self.attention(logits)  # (B, V, T) with context mixing
         return x  # return logits-like tensor for CTC
+
+
+"""
+Models: Easter2Plus with ViT Module
+
+"""
+
+
+class ConvFrontEnd(nn.Module):
+    def __init__(self, out_ch=64, input_height=100):
+        super().__init__()
+        # simple 2D frontend that reduces height by 4 and keeps width
+        self.net = nn.Sequential(
+            nn.Conv2d(1, 32, 3, padding=1), nn.ReLU(), nn.MaxPool2d((2,1)),
+            nn.Conv2d(32, out_ch, 3, padding=1), nn.ReLU(), nn.MaxPool2d((2,1)),
+        )
+        self.out_ch = out_ch
+        self.input_height = input_height
+
+    def forward(self, x):
+        f = self.net(x)          # B x C x H/4 x W
+        b, c, h, w = f.shape
+        return f.view(b, c * h, w)  # B x (C*H') x W
+
+# -------------- ConvPatchViTEncoder (reusable) ----------------
+class ConvPatchViTEncoder(nn.Module):
+    """Lightweight ViT encoder with conv-based patch embedding.
+
+    Expects input (B, C, L) and returns (B, embed_dim, L') where L' depends on patch_stride.
+    """
+    def __init__(self, in_ch, embed_dim=512, patch_kernel=3, patch_stride=1, num_layers=2, num_heads=4, mlp_ratio=2.0):
+        super().__init__()
+        self.patch_proj = nn.Conv1d(in_ch, embed_dim, kernel_size=patch_kernel, stride=patch_stride, padding=patch_kernel//2)
+        self.norm = nn.LayerNorm(embed_dim)
+        encoder_layer = nn.TransformerEncoderLayer(d_model=embed_dim, nhead=num_heads, dim_feedforward=int(embed_dim*mlp_ratio), batch_first=True)
+        self.transformer = nn.TransformerEncoder(encoder_layer, num_layers=num_layers)
+
+    def forward(self, x):
+        # x: (B, C, L)
+        x = self.patch_proj(x)           # (B, embed_dim, L')
+        x = x.permute(0, 2, 1)           # (B, L', embed_dim)
+        x = self.norm(x)
+        x = self.transformer(x)         # (B, L', embed_dim)
+        x = x.permute(0, 2, 1)          # (B, embed_dim, L')
+        return x
+
+# -------------- Easter2PlusViT (no aux head) ------------------
+class Easter2PlusViT(nn.Module):
+    """CNNFrontEnd -> Backbone -> ConvPatchViTEncoder -> classifier logits
+
+    backbone MUST return (features, feat_intermediate)
+    """
+    def __init__(self, cnn_front, backbone, vit_cfg, vocab_size=77):
+        super().__init__()
+        self.cnn_front = cnn_front
+        self.backbone = backbone
+        self.vit = ConvPatchViTEncoder(**vit_cfg)
+        self.classifier = nn.Conv1d(vit_cfg['embed_dim'], vocab_size, kernel_size=1)
+
+    def forward(self, x):
+        _, features = self.backbone(self.cnn_front(x))  # feat: (B, C, L)
+        vit_out = self.vit(features)                    # (B, embed_dim, L')
+        logits = self.classifier(vit_out)           # (B, vocab, L')
+        return logits
