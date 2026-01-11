@@ -813,7 +813,6 @@ Models: Easter2Plus with ViT Module
 
 """
 
-
 class ConvFrontEnd(nn.Module):
     def __init__(self, out_ch=64, input_height=100):
         super().__init__()
@@ -868,5 +867,5 @@ class Easter2PlusViT(nn.Module):
     def forward(self, x):
         _, features = self.backbone(self.cnn_front(x))  # feat: (B, C, L)
         vit_out = self.vit(features)                    # (B, embed_dim, L')
-        logits = self.classifier(vit_out)           # (B, vocab, L')
+        logits = self.classifier(vit_out)               # (B, vocab, L')
         return logits

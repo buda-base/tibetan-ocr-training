@@ -105,8 +105,16 @@ class CTCNetwork(ABC):
 
         return val_loss.item()
 
-    def load_checkpoint(self, checkpoint_path: str):
-        checkpoint = torch.load(checkpoint_path)
+    def load_checkpoint(self, checkpoint_path: str, device: str):
+
+        if device == "cpu":
+            map_location=torch.device('cpu')
+            checkpoint = torch.load(checkpoint_path, map_location)
+
+        # assuming CUDA by default
+        else:
+            checkpoint = torch.load(checkpoint_path)
+            
         self.model.load_state_dict(checkpoint["state_dict"])
         self.optimizer.load_state_dict(checkpoint["optimizer"])
 
@@ -257,6 +265,7 @@ Easter2 (original)
 class EasterNetwork(CTCNetwork):
     def __init__(
         self,
+        variant: str = "Easter2",
         image_width: int = 3200,
         image_height: int = 100,
         num_classes: int = 80,
@@ -269,15 +278,22 @@ class EasterNetwork(CTCNetwork):
         self.mean_pooling = mean_pooling
         self.learning_rate = learning_rate
 
-        self.model = Easter2(
-            input_channels=image_height,
-            vocab_size=num_classes,
-            mean_pooling=mean_pooling,
-        )
+        if variant == "Easter2":
+            self.model = Easter2(
+                input_channels=image_height,
+                vocab_size=num_classes,
+                mean_pooling=mean_pooling,
+            )
+        elif variant == "Easter2b":
+            self.model = Easter2b(image_height, vocab_size=num_classes)
+
+        else:
+            raise ValueError("Undefined Easter2 variant provided")
+        
 
         super().__init__(
             self.model,
-            "Easter2",
+            variant,
             image_width,
             image_height,
             num_classes,
