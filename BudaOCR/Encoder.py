@@ -2,11 +2,9 @@ import pyewts
 import pyctcdecode.decoder as CTCDecoder
 
 from abc import ABC, abstractmethod
+from botok import normalize_unicode, tokenize_in_stacks
 
 from BudaOCR.Utils import (
-    preprocess_unicode,
-    normalize_unicode,
-    tokenize_in_stacks,
     postprocess_wylie_label,
     preprocess_unicode,
 )
@@ -55,7 +53,7 @@ class LabelEncoder(ABC):
     def decode(self, inputs: list[int]) -> str:
         return "".join(self._charset[x - 1] for x in inputs)
 
-    def ctc_decode(self, logits):
+    def ctc_decode(self, logits) -> str | list[str]:
         return self.ctc_decoder.decode(logits).replace(" ", "")
 
 
@@ -75,7 +73,8 @@ class StackEncoder(LabelEncoder):
         stacks = tokenize_in_stacks(label)
 
         return stacks
-
+    
+    @property
     def num_classes(self) -> int:
         return len(self._charset) + 1
 
@@ -94,5 +93,6 @@ class WylieEncoder(LabelEncoder):
 
         return label
 
+    @property
     def num_classes(self) -> int:
         return len(self._charset) + 1

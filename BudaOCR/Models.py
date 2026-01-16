@@ -1,6 +1,7 @@
 import torch
-import torch.nn.functional as F
 from torch import nn
+
+from BudaOCR.Data import VitConfig
 
 """
 MultiScaleConv-Block
@@ -87,10 +88,10 @@ class VanillaCRNN(nn.Module):
 
     def __init__(
         self,
-        img_height: int = 80,
-        img_width: int = 2000,
+        img_height: int = 100,
+        img_width: int = 3200,
         img_channels: int = 1,
-        charset_size: int = 68,
+        charset_size: int = 80,
         map_to_seq_hidden: int = 64,
         rnn_hidden: int = 256,
         leaky_relu: bool = False,
@@ -140,6 +141,9 @@ class VanillaCRNN(nn.Module):
         self.linear = nn.Linear(
             512 * (self.input_height // 16 - 1), self.map_to_seq_hidden
         )
+
+        self.rnn1: nn.Module
+        self.rnn2: nn.Module
 
         if rnn == "lstm":
             self.rnn1 = nn.LSTM(map_to_seq_hidden, rnn_hidden, bidirectional=True)
@@ -207,6 +211,8 @@ class GlobalContext(nn.Module):
         self.linear1 = nn.Linear(in_channels, out_channels // 8)
         self.linear2 = nn.Linear(out_channels // 8, out_channels)
         self.relu = nn.ReLU()
+        
+        self.activation: nn.Module
 
         if activation == "sigmoid":
             self.activation = (
@@ -397,7 +403,7 @@ class Easter2(nn.Module):
     def __init__(
         self,
         input_channels: int,  # dynamically provided from CNN frontend
-        vocab_size: int = 77,
+        vocab_size: int = 80,
         bn_eps: float = 1e-5,
         bn_decay: float = 0.997,
         mean_pooling: bool = True,
@@ -529,14 +535,14 @@ Easter2Fixes for A/B-Testing trying to remove the eating of pixels at the beginn
 class EasterUnitB(nn.Module):
     def __init__(
         self,
-        in_channels,
-        out_channels,
-        kernel,
-        stride,
-        dropout,
-        bn_eps=1e-5,
-        bn_decay=0.997,
-        mean_pool=True,
+        in_channels: int,
+        out_channels: int,
+        kernel: int,
+        stride: int,
+        dropout: float,
+        bn_eps: float = 1e-5,
+        bn_decay: float = 0.997,
+        mean_pool: bool = True,
     ):
         super().__init__()
         self.dropout = dropout
@@ -619,11 +625,11 @@ class EasterUnitB(nn.Module):
 class Easter2b(nn.Module):
     def __init__(
         self,
-        input_height=80,
-        bn_eps=1e-5,
-        bn_decay=0.997,
-        vocab_size=77,
-        mean_pooling=True,
+        input_height: int = 100,
+        bn_eps: float = 1e-5,
+        bn_decay: float = 0.997,
+        vocab_size: int = 80,
+        mean_pooling: bool = True,
     ):
         super().__init__()
 
@@ -698,7 +704,7 @@ Models: Easter2PlusLight with lightweight CNN and Self-Attention Head
 
 
 class CNNFrontEnd(nn.Module):
-    def __init__(self, in_channels=1, out_channels=64):
+    def __init__(self, in_channels: int = 1, out_channels: int = 64):
         super().__init__()
         self.features = nn.Sequential(
             nn.Conv2d(in_channels, 32, kernel_size=3, stride=1, padding=1),
@@ -709,7 +715,7 @@ class CNNFrontEnd(nn.Module):
             nn.MaxPool2d((2, 1)),  # reduce height but not width
         )
 
-    def forward(self, x):
+    def forward(self, x: torch.Tensor):
         x = self.features(x)
         b, c, h, w = x.size()
         x = x.view(b, c * h, w)  # convert to (B, H*C, W)
@@ -717,7 +723,7 @@ class CNNFrontEnd(nn.Module):
 
 
 class SelfAttention(nn.Module):
-    def __init__(self, dim, heads=4, attn_dim=None):
+    def __init__(self, dim: int, heads: int = 4, attn_dim=None):
         super().__init__()
         attn_dim = attn_dim or dim
         assert (
@@ -736,7 +742,7 @@ class SelfAttention(nn.Module):
         )
         self.proj_out = nn.Linear(attn_dim, dim) if attn_dim != dim else nn.Identity()
 
-    def forward(self, x):
+    def forward(self, x: torch.Tensor):
         x = x.permute(0, 2, 1)  # (B, C, L) -> (B, L, C)
         x = self.proj_in(x)
         attn_out, _ = self.attn(x, x, x)
@@ -746,7 +752,7 @@ class SelfAttention(nn.Module):
         return x.permute(0, 2, 1)  # (B, L, C) -> (B, C, L)
 
 
-class Easter2PlusLight(nn.Module):
+class Easter2Attention(nn.Module):
     """
     Easter2 with:
       - CNNFrontEnd2 for better vertical sensitivity
@@ -787,17 +793,17 @@ class Easter2PlusLight(nn.Module):
                 vocab_size=vocab_size,
                 use_global_context=False,
             )
-            print(f"Using Easter2 standard")
+            print("Using Easter2 standard")
         else:
             self.backbone = Easter2b(
                 input_height=easter_in_ch, vocab_size=vocab_size
             )
-            print(f"Using Easter2 Fixed")
+            print("Using Easter2 Fixed")
 
         # Attention over logits (B, V, T)
         self.attention = SelfAttention(dim=vocab_size, heads=4, attn_dim=attention_dim)
 
-    def forward(self, x):
+    def forward(self, x: torch.Tensor):
         # x: (B, 1, H, W)
         x = self.cnn_front(x)  # (B, C_big, W')
         x = self.norm_front(x)  # (B, C_big, W')
@@ -814,7 +820,7 @@ Models: Easter2Plus with ViT Module
 """
 
 class ConvFrontEnd(nn.Module):
-    def __init__(self, out_ch=64, input_height=100):
+    def __init__(self, out_ch: int = 64, input_height: int = 100):
         super().__init__()
         # simple 2D frontend that reduces height by 4 and keeps width
         self.net = nn.Sequential(
@@ -824,25 +830,31 @@ class ConvFrontEnd(nn.Module):
         self.out_ch = out_ch
         self.input_height = input_height
 
-    def forward(self, x):
+    def forward(self, x: torch.Tensor):
         f = self.net(x)          # B x C x H/4 x W
         b, c, h, w = f.shape
         return f.view(b, c * h, w)  # B x (C*H') x W
 
-# -------------- ConvPatchViTEncoder (reusable) ----------------
+# -------------- ConvPatchViTEncoder ----------------
 class ConvPatchViTEncoder(nn.Module):
     """Lightweight ViT encoder with conv-based patch embedding.
 
     Expects input (B, C, L) and returns (B, embed_dim, L') where L' depends on patch_stride.
     """
-    def __init__(self, in_ch, embed_dim=512, patch_kernel=3, patch_stride=1, num_layers=2, num_heads=4, mlp_ratio=2.0):
+    def __init__(self, in_ch: int, embed_dim: int = 512, patch_kernel: int = 3, patch_stride: int = 1, num_layers: int = 2, num_heads: int = 4, mlp_ratio: float = 2.0):
         super().__init__()
-        self.patch_proj = nn.Conv1d(in_ch, embed_dim, kernel_size=patch_kernel, stride=patch_stride, padding=patch_kernel//2)
+        self.patch_proj = nn.Conv1d(
+            in_ch,
+            embed_dim,
+            kernel_size=patch_kernel,
+            stride=patch_stride,
+            padding=patch_kernel//2)
+
         self.norm = nn.LayerNorm(embed_dim)
         encoder_layer = nn.TransformerEncoderLayer(d_model=embed_dim, nhead=num_heads, dim_feedforward=int(embed_dim*mlp_ratio), batch_first=True)
         self.transformer = nn.TransformerEncoder(encoder_layer, num_layers=num_layers)
 
-    def forward(self, x):
+    def forward(self, x: torch.Tensor):
         # x: (B, C, L)
         x = self.patch_proj(x)           # (B, embed_dim, L')
         x = x.permute(0, 2, 1)           # (B, L', embed_dim)
@@ -857,12 +869,23 @@ class Easter2PlusViT(nn.Module):
 
     backbone MUST return (features, feat_intermediate)
     """
-    def __init__(self, cnn_front, backbone, vit_cfg, vocab_size=77):
+    def __init__(self, cnn_front: nn.Module, backbone: nn.Module, vit_cfg: VitConfig, vocab_size: int = 80):
         super().__init__()
+        self.vit_cfg = vit_cfg
         self.cnn_front = cnn_front
         self.backbone = backbone
-        self.vit = ConvPatchViTEncoder(**vit_cfg)
-        self.classifier = nn.Conv1d(vit_cfg['embed_dim'], vocab_size, kernel_size=1)
+        
+        #vit_cfg = dict(in_ch=512, embed_dim=256, patch_kernel=3, patch_stride=1, num_layers=2, num_heads=4, mlp_ratio=2.0)
+        self.vit = ConvPatchViTEncoder(
+            vit_cfg.in_ch,
+            vit_cfg.embed_dim,
+            vit_cfg.patch_kernel,
+            vit_cfg.patch_stride,
+            vit_cfg.num_layers,
+            vit_cfg.num_heads,
+            vit_cfg.mlp_ratio)
+        
+        self.classifier = nn.Conv1d(vit_cfg.embed_dim, vocab_size, kernel_size=1)
 
     def forward(self, x):
         _, features = self.backbone(self.cnn_front(x))  # feat: (B, C, L)

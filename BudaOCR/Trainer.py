@@ -1,7 +1,6 @@
 import os
 import json
 import random
-import numpy as np
 
 from evaluate import load
 from datetime import datetime
@@ -10,13 +9,11 @@ from tqdm import tqdm
 
 # torch imports
 import torch
-from torch import nn
 from torch.utils.data import DataLoader
 
 from BudaOCR.Datasets import CTCDataset, ctc_collate_fn
-from BudaOCR.Encoder import LabelEncoder
+from BudaOCR.Encoder import LabelEncoder, WylieEncoder
 from BudaOCR.Networks import CTCNetwork
-from BudaOCR.Models import Easter2, VanillaCRNN
 from BudaOCR.Augmentations import train_transform
 
 from BudaOCR.Utils import (
@@ -56,7 +53,10 @@ class OCRTrainer:
 
         self.cer_scorer = load("cer")
         self.do_test_pass = do_test_pass
-        self.training_time = datetime.now()
+        
+        time_stamp = datetime.now()
+        self.training_time = f"{time_stamp.year}_{time_stamp.month}_{time_stamp.day}_{time_stamp.hour}_{time_stamp.minute}"
+       
         # self.scheduler = torch.optim.lr_scheduler.ExponentialLR(self.network.optimizer, gamma=0.99)
         self.scheduler = torch.optim.lr_scheduler.StepLR(
             self.network.optimizer, step_size=10, gamma=0.5
@@ -68,14 +68,14 @@ class OCRTrainer:
         self.image_height = image_height
         self.batch_size = batch_size
 
-        self.train_images = []
-        self.train_labels = []
+        self.train_images: list[str] = []
+        self.train_labels : list[str] = []
 
-        self.valid_images = []
-        self.valid_labels = []
+        self.valid_images: list[str] = []
+        self.valid_labels: list[str] = []
 
-        self.test_images = []
-        self.test_labels = []
+        self.test_images: list[str] = []
+        self.test_labels: list[str] = []
 
         self.train_dataset = None
         self.valid_dataset = None
@@ -93,7 +93,7 @@ class OCRTrainer:
     def _create_output_dir(self, output_dir) -> str:
         output_dir = os.path.join(
             output_dir,
-            f"{self.training_time.year}_{self.training_time.month}_{self.training_time.day}_{self.training_time.hour}_{self.training_time.minute}",
+            self.training_time,
         )
         create_dir(output_dir)
         return output_dir
@@ -304,7 +304,13 @@ class OCRTrainer:
 
         print(f"Saving model config for  architecture: {self.network.architecture}")
 
+        charset = self.label_encoder.charset
+
+        if isinstance(self.label_encoder, WylieEncoder):
+            charset = "".join(x for x in charset)
+
         network_config = {
+            "version" : str(self.training_time),
             "checkpoint": f"{self.model_name}.pth",
             "onnx-model": f"{self.model_name}.onnx",
             "architecture": self.network.architecture,
@@ -315,9 +321,10 @@ class OCRTrainer:
             "squeeze_channel_dim": (
                 "yes" if self.network.architecture == "Easter2" else "no"
             ),
-            "swap_hw": "no" if self.network.architecture == "Easter2" else "yes",
+            "swap_hw": "no" if "Easter" in self.network.architecture  else "yes",
+            "add_blank" : "yes",
             "encoder": self.label_encoder.name,
-            "charset": self.label_encoder.charset,
+            "charset": charset,
         }
 
         json_out = json.dumps(network_config, ensure_ascii=False, indent=2)
@@ -342,10 +349,10 @@ class OCRTrainer:
         self.is_silent = silent
 
         if self.is_initialized:
-            train_history = {}
-            train_loss_history = []
-            val_loss_history = []
-            cer_score_history = []
+            train_history: dict[str, list[float]] = {}
+            train_loss_history: list[float] = []
+            val_loss_history: list[float] = []
+            cer_score_history: list[float] = []
             best_loss = None
 
             max_patience = patience
@@ -416,12 +423,18 @@ class OCRTrainer:
 
                     idx = random.randint(0, len(test_logits) - 1)
                     pred = self.label_encoder.ctc_decode(test_logits[idx, :, :])
+                    gt_label = gt_labels[idx]
+
+                    # join list[str] returned from the stack encoder into continous string
+                    if isinstance(gt_label, list):
+                        gt_label = "".join(x for x in gt_label)
+
                     cer_score = self.cer_scorer.compute(
-                        predictions=[pred], references=[gt_labels[idx]]
+                        predictions=[pred], references=[gt_label]
                     )
 
                     if not self.is_silent:
-                        print(f"Label: {gt_labels[idx]}")
+                        print(f"Label: {gt_label}")
                         print(f"Prediction: {pred}")
                         print(f"CER: {cer_score}")
                     cer_score_history.append(cer_score)

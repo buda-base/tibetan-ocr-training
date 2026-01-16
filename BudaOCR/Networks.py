@@ -2,6 +2,7 @@ import numpy as np
 
 from tqdm import tqdm
 from abc import ABC, abstractmethod
+from numpy.typing import NDArray
 
 import torch
 import torch.nn.functional as F
@@ -9,7 +10,8 @@ import torch.nn.functional as F
 from torch import nn
 from torch.amp.grad_scaler import GradScaler
 
-from BudaOCR.Models import ConvFrontEnd, Easter2, Easter2PlusLight, Easter2PlusViT, Easter2b, VanillaCRNN
+from BudaOCR.Data import VitConfig
+from BudaOCR.Models import ConvFrontEnd, Easter2, Easter2Attention, Easter2PlusViT, Easter2b, VanillaCRNN
 
 
 class CTCNetwork(ABC):
@@ -105,7 +107,7 @@ class CTCNetwork(ABC):
 
         return val_loss.item()
 
-    def load_checkpoint(self, checkpoint_path: str, device: str):
+    def load_checkpoint(self, checkpoint_path: str, device: str = "cuda"):
 
         if device == "cpu":
             map_location=torch.device('cpu')
@@ -187,7 +189,7 @@ class CRNNNetwork(CTCNetwork):
         return [1, 1, self.image_height, self.image_width]
 
     def fine_tune(self, checkpoint_path: str):
-        self.load_checkpoint(checkpoint_path)
+        self.load_checkpoint(checkpoint_path, self.device_str)
 
         trainable_layers = ["conv_block_6"]
 
@@ -310,7 +312,7 @@ class EasterNetwork(CTCNetwork):
         return [self.num_classes, self.image_height, self.image_width]
 
     def fine_tune(self, checkpoint_path: str):
-        self.load_checkpoint(checkpoint_path)
+        self.load_checkpoint(checkpoint_path, self.device_str)
 
         trainable_layers = ["conv1d_5"]
 
@@ -327,7 +329,7 @@ class EasterNetwork(CTCNetwork):
         self.fine_tuning = True
 
     def load_model(self, checkpoint_path: str):
-        self.load_checkpoint(checkpoint_path)
+        self.load_checkpoint(checkpoint_path, self.device_str)
 
     def forward(self, data, scaler, amp):
         images, targets, target_lengths, _ = data
@@ -366,7 +368,7 @@ class EasterNetwork(CTCNetwork):
 
         return loss.item()
 
-    def test(self, data: tuple) -> tuple[list[str], list[str]]:
+    def test(self, data: tuple) -> tuple[NDArray, list[str]]:
         images, targets, target_lengths, gt_labels = data
 
         images = torch.squeeze(images).to(self.device)
@@ -383,7 +385,7 @@ class EasterNetwork(CTCNetwork):
         return np_logits, gt_labels
 
 
-class Easter2PlusNetwork(CTCNetwork):
+class Easter2AttNetwork(CTCNetwork):
     """
     A modified Network architecture that uses a modified Easter2 version (Easter2b) as backbone together with a light Attention Head
     """
@@ -396,10 +398,10 @@ class Easter2PlusNetwork(CTCNetwork):
         ctc_type: str = "default",
         ctc_reduction: str = "mean",
         learning_rate: float = 0.0005,
-        easter_variant="default",
+        easter_variant: str = "default",
     ) -> None:
 
-        model = Easter2PlusLight(
+        model = Easter2Attention(
             vocab_size=num_classes,
             input_height=image_height,
             easter_variant=easter_variant,
@@ -407,7 +409,7 @@ class Easter2PlusNetwork(CTCNetwork):
 
         super().__init__(
             model,
-            "Easter2Plus",
+            "Easter2Attention",
             image_width,
             image_height,
             num_classes,
@@ -498,7 +500,7 @@ class Easter2PlusNetwork(CTCNetwork):
 
         return val_loss.item()
 
-    def test(self, data: tuple) -> tuple[list[str], list[str]]:
+    def test(self, data: tuple) -> tuple[NDArray, list[str]]:
         images, targets, target_lengths, gt_labels = data
 
         images = images.to(self.device)
@@ -557,6 +559,7 @@ class Easter2ViTNetwork(CTCNetwork):
 
     def __init__(
         self,
+        vit_cfg: VitConfig,
         image_width: int = 3200,
         image_height: int = 100,
         num_classes: int = 80,
@@ -566,9 +569,8 @@ class Easter2ViTNetwork(CTCNetwork):
         easter_variant="fixed",
     ) -> None:
 
+        assert vit_cfg is not None
 
-        # TODO: parameterize the configuration
-        vit_cfg = dict(in_ch=512, embed_dim=256, patch_kernel=3, patch_stride=1, num_layers=2, num_heads=4, mlp_ratio=2.0)
         cnn = ConvFrontEnd(out_ch=64, input_height=image_height)
         backbone = Easter2b(input_height=64*(image_height//4))
         model = Easter2PlusViT(cnn, backbone, vit_cfg, vocab_size=num_classes)
@@ -666,7 +668,7 @@ class Easter2ViTNetwork(CTCNetwork):
 
         return val_loss.item()
 
-    def test(self, data: tuple) -> tuple[list[str], list[str]]:
+    def test(self, data: tuple) -> tuple[NDArray, list[str]]:
         images, targets, target_lengths, gt_labels = data
 
         images = images.to(self.device)

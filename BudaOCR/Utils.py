@@ -4,20 +4,22 @@ import cv2
 import json
 import logging
 import random
-
+import numpy as np
+import numpy.typing as npt
 import matplotlib.pyplot as plt
 
-from dataclasses import dataclass
-import numpy as np
+
 from glob import glob
 from tqdm import tqdm
 from enum import Enum
 from pathlib import Path
-import numpy.typing as npt
+
 from natsort import natsorted
-from typing import Dict, List, Tuple
+
 from sklearn.model_selection import train_test_split
-from botok import tokenize_in_stacks, normalize_unicode
+from botok import normalize_unicode
+
+from BudaOCR.Data import CTCModelConfig, DatasetDistribution
 
 
 class Labelformat(Enum):
@@ -28,24 +30,6 @@ class TargetEncoding(Enum):
     stacks = 0,
     wyile = 1
 
-@dataclass
-class DatasetDistribution:
-    train_samples: list[str]
-    val_samples: list[str]
-    test_samples: list[str]
-
-@dataclass
-class CTCModelConfig:
-    checkpoint: str
-    model_file: str
-    architecture: str
-    input_width: int
-    input_height: int
-    input_layer: str
-    output_layer: str
-    squeeze_channel: bool
-    swap_hw: bool
-    charset: List[str]
 
 def show_image(
     image: npt.NDArray, cmap: str = "", axis="off", fig_x: int = 24, fix_y: int = 13
@@ -73,7 +57,7 @@ def get_filename(file_path: str) -> str:
     return name.rstrip(".")
 
 
-def read_stack_file(file_path: str) -> List[str]:
+def read_stack_file(file_path: str) -> list[str]:
     with open(file_path, "r", encoding="utf-8") as f:
         stacks = f.readlines()
         stacks = [x.replace("\n", "") for x in stacks]
@@ -115,14 +99,14 @@ def read_distribution(distribution_file: str) -> DatasetDistribution | None:
             return None
       
 
-def build_data_paths(data_root: str, img_file_ext: str = "jpg") -> Tuple[list[str], List[str]]:
+def build_data_paths(data_root: str, img_file_ext: str = "jpg") -> tuple[list[str], list[str]]:
     _images = natsorted(glob(f"{data_root}/lines/*.{img_file_ext}"))
     _labels = natsorted(glob(f"{data_root}/transcriptions/*.txt"))
 
     return _images, _labels
 
 
-def build_distribution_paths(data_path: str, samples: List[str]) -> Tuple[List[str], List[str]]:
+def build_distribution_paths(data_path: str, samples: list[str]) -> tuple[list[str], list[str]]:
     images = []
     labels = []
 
@@ -159,7 +143,7 @@ def assemble_data_paths(data_root: Path):
 
 
 
-def build_distribution_from_directory(data_dir: str) -> Dict:
+def build_distribution_from_directory(data_dir: str) -> dict:
     data_path = Path(data_dir)
 
     all_train_images = []
@@ -236,7 +220,7 @@ def build_distribution_from_directory(data_dir: str) -> Dict:
     return distribution
 
 
-def accumulate_distributions(data_path: str, datasets: List[str]) -> dict[str, list[str]] | None:
+def accumulate_distributions(data_path: str, datasets: list[str]) -> dict[str, list[str]] | None:
     all_train_images = []
     all_train_labels = []
 
@@ -288,7 +272,7 @@ def accumulate_distributions(data_path: str, datasets: List[str]) -> dict[str, l
     return distribution
 
 
-def build_distribution_from_file(distribution_file: str, data_root: str) -> dict[str, str] | None:
+def build_distribution_from_file(distribution_file: str, data_root: str) -> dict[str, list[str]] | None:
     data_distribution = read_distribution(distribution_file)
 
     if data_distribution is None:
@@ -309,7 +293,7 @@ def build_distribution_from_file(distribution_file: str, data_root: str) -> dict
     return distribution
 
 
-def save_distribution(train_images: List[str], valid_images: List[str], test_images: List[str], output_dir: str):
+def save_distribution(train_images: list[str], valid_images: list[str], test_images: list[str], output_dir: str):
     assert (os.path.isdir(output_dir))
     
     out_file = os.path.join(output_dir, "data.distribution")
@@ -341,7 +325,7 @@ def save_distribution(train_images: List[str], valid_images: List[str], test_ima
     print(f"Saved data distribution to: {out_file}")
 
 
-def split_dataset(images: List[str], labels: List[str], train_val_split: float = 0.2, val_test_split: float = 0.5, seed: int = 42):
+def split_dataset(images: list[str], labels: list[str], train_val_split: float = 0.2, val_test_split: float = 0.5, seed: int = 42):
     train_images, valtest_images, train_labels, valtest_labels = train_test_split(images, labels, test_size=train_val_split, random_state=seed)
     val_images, test_images, val_labels, test_labels = train_test_split(valtest_images, valtest_labels, test_size=val_test_split, random_state=seed)
 
@@ -357,7 +341,7 @@ def validate_split(images, labels):
             print(f"Mismatch: {img} vs. {lbl}")
 
 
-def shuffle_data(images: list[str], labels: list[str]) -> Tuple[list[str], list[str]]:
+def shuffle_data(images: list[str], labels: list[str]) -> tuple[list[str], list[str]]:
     c = list(zip(images, labels))
     random.shuffle(c)
 
@@ -389,13 +373,13 @@ def binarize(
     return bw
 
 
-def resize_to_height(image, target_height: int) -> Tuple[npt.NDArray, int]:
+def resize_to_height(image, target_height: int) -> tuple[npt.NDArray, int]:
     ratio = target_height / image.shape[0]
     image = cv2.resize(image, (int(image.shape[1] * ratio), target_height))
     return image, ratio
 
 
-def resize_to_width(image, target_width: int) -> Tuple[npt.NDArray, int]:
+def resize_to_width(image, target_width: int) -> tuple[npt.NDArray, int]:
     ratio = target_width / image.shape[1]
     image = cv2.resize(image, (target_width, int(image.shape[0] * ratio)))
     return image, ratio
