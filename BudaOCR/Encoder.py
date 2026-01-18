@@ -47,7 +47,7 @@ class LabelEncoder(ABC):
                 enc_lbl.append(self._charset.index(x) + 1)
             else:
                 enc_lbl.append(-1)
-                print("WARNING: {x} not in charset")
+                print(f"WARNING: {x} not in charset")
         return enc_lbl
 
     def decode(self, inputs: list[int]) -> str:

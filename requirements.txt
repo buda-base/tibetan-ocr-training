@@ -68,7 +68,7 @@ protobuf==6.33.0
 psutil==7.1.3
 pure_eval==0.2.3
 pyarrow==22.0.0
-pyctcdecode @ git+https://github.com/tz579/pyctcdecode@5964a111f0ea1d059b711c7cbae701d91e2e7b82
+pyctcdecode @ git+https://github.com/buda-base/pyctcdecode
 pydantic==2.12.4
 pydantic_core==2.41.5
 pyewts==0.2.0
