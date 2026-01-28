@@ -59,6 +59,10 @@ class CTCNetwork(ABC):
     @abstractmethod
     def get_input_shape(self) -> list[int]:
         raise NotImplementedError
+    
+
+    def reset_optimizer(self):
+        self.optimizer.state.clear()
 
     @abstractmethod
     def fine_tune(self, checkpoint_path: str):
@@ -596,33 +600,27 @@ class Easter2ViTNetwork(CTCNetwork):
         targets = targets.to(self.device)
         target_lengths = target_lengths.to(self.device)
 
-        if scaler is not None:
-            with torch.amp.autocast(self.device_str, dtype=torch.float16, enabled=True):
-                logits = self.model(images)
-            # outputs may be (main, aux) or single tensor
-        else:
-            logits = self.model(images)
+        log_probs = self.model(images)
 
-        with torch.amp.autocast(self.device_str, enabled=False):
-            if isinstance(logits, (list, tuple)):
-                main_logits, _ = logits[0], logits[1]
+        with torch.amp.autocast(self.device_str, enabled=True):
+            if isinstance(log_probs, (list, tuple)):
+                out, _ = log_probs[0], log_probs[1]
             else:
-                main_logits, _ = logits, None
-
+                out = log_probs
             # main_logits: (B, V, T)
             # CTC expects (T, N, C) -> so permute and take log_softmax across C
-            main_logits = main_logits.float()
-            log_probs = main_logits.log_softmax(dim=1)  # (B, V, T)
-            log_probs = log_probs.permute(2, 0, 1)  # (T, B, V)
+            #main_logits = main_logits.float()
+            #log_probs = main_logits.log_softmax(dim=1)  # (B, V, T)
+            out = log_probs.permute(2, 0, 1)  # (T, B, V)
 
             # compute input_lengths: model-specific. We approximate by T for each batch (no downsampling info)
-            T_seq = log_probs.size(0)
+            T_seq = out.size(0)
             input_lengths = torch.full(
                 size=(images.size(0),), fill_value=T_seq, dtype=torch.long
             ).to(self.device)
             target_lengths = torch.flatten(target_lengths)
 
-            return self.criterion(log_probs, targets, input_lengths, target_lengths)
+            return self.criterion(out, targets, input_lengths, target_lengths)
 
     def fine_tune(self, checkpoint_path: str):
         pass

@@ -1,4 +1,4 @@
-CHARSET = "!#%'°^$`()+-./0123456789:=?@ADHIMNRSTUWXY[\\]_abcdefghijklmnoprstuwyxz|~§&äüö<>;卍卐ऽ}"
+CHARSET = "!#%'°^$`()+-./0123456789:=?@ADHIMNRSTUWXY[\]abcdefghijklmnoprstuwyxz|~§&äüö<>;卍卐ऽ}"
 STACK_FILE = "tib-stacks.txt"
 
 # Tibetan character ranges

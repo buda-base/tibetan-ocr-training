@@ -481,3 +481,6 @@ class OCRTrainer:
                 test_sample_idx += 1
 
         return cer_scores
+    
+    def reset_optimizer(self):
+        self.network.reset_optimizer()

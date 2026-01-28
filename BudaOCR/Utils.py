@@ -63,7 +63,7 @@ def read_stack_file(file_path: str) -> list[str]:
         stacks = [x.replace("\n", "") for x in stacks]
         stacks = [x.replace("\t", "") for x in stacks]
 
-        return stacks
+        return list(set(stacks))
 
 
 def read_ocr_model_config(config_file: str):

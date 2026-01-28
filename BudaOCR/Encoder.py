@@ -3,6 +3,7 @@ import pyctcdecode.decoder as CTCDecoder
 
 from abc import ABC, abstractmethod
 from botok import normalize_unicode, tokenize_in_stacks
+from botok.utils.lenient_normalization import normalize_graphical
 
 from BudaOCR.Utils import (
     postprocess_wylie_label,
@@ -14,14 +15,23 @@ class LabelEncoder(ABC):
     def __init__(self, charset: str | list[str], name: str):
         self.name = name
 
+        assert charset is not None
+
         if isinstance(charset, str):
             self._charset = [x for x in charset]
-
         elif isinstance(charset, list):
             self._charset = charset
+        else:
+            self._charset = None
 
+        if " " in self._charset:
+            self._charset.remove(" ")
+        
+        self._charset.insert(-1, "")
         self.ctc_vocab = self._charset.copy()
         self.ctc_vocab.insert(0, " ")
+
+        print(f"building ctcvocab: {len(self.ctc_vocab)}")
         self.ctc_decoder = CTCDecoder.build_ctcdecoder(self.ctc_vocab)
 
     @abstractmethod
@@ -67,6 +77,7 @@ class StackEncoder(LabelEncoder):
 
         if normalize:
             label = normalize_unicode(label)
+            label = normalize_graphical(label)
 
         label = label.replace(" ", "")
         label = preprocess_unicode(label)
@@ -87,6 +98,7 @@ class WylieEncoder(LabelEncoder):
     def read_label(self, label_path: str):
         f = open(label_path, "r", encoding="utf-8")
         label = f.readline()
+        label = normalize_graphical(label)
         label = preprocess_unicode(label)
         label = self.converter.toWylie(label)
         label = postprocess_wylie_label(label)
