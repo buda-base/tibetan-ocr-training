@@ -543,7 +543,7 @@ class EasterUnitB(nn.Module):
         dropout: float,
         bn_eps: float = 1e-5,
         bn_decay: float = 0.997,
-        mean_pool: bool = True,
+        mean_pool: bool = True
     ):
         super().__init__()
         self.dropout = dropout
@@ -631,12 +631,14 @@ class Easter2b(nn.Module):
         bn_decay: float = 0.997,
         vocab_size: int = 80,
         mean_pooling: bool = True,
+        apply_activation: bool = True
     ):
         super().__init__()
 
         self.input_height = input_height
         self.vocab_size = vocab_size
         self.mean_pooling = mean_pooling
+        self.apply_activation = apply_activation
 
         # SAME padding for stride=2
         self.conv1d_1 = nn.Conv1d(input_height, 128, kernel_size=3, stride=2, padding=1)
@@ -695,7 +697,9 @@ class Easter2b(nn.Module):
 
         features = x  # (B, 512, L)
         logits = self.conv1d_5(features)  # (B, vocab_size, L)
-
+        
+        if self.apply_activation:
+            logits = F.log_softmax(logits, dim=1, dtype=torch.float)
         return logits, features
 
 
@@ -750,6 +754,7 @@ class SelfAttention(nn.Module):
         x = self.norm(x + attn_out)
         x = self.norm(x + self.mlp(x))
         x = self.proj_out(x)
+
         return x.permute(0, 2, 1)  # (B, L, C) -> (B, C, L)
 
 
@@ -812,6 +817,7 @@ class Easter2Attention(nn.Module):
 
         logits, _ = self.backbone(x)  # (B, V, T)
         x = self.attention(logits)  # (B, V, T) with context mixing
+        logits = F.log_softmax(logits, dim=1, dtype=torch.float)
         return x  # return logits-like tensor for CTC
 
 

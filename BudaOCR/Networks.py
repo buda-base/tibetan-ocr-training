@@ -69,7 +69,7 @@ class CTCNetwork(ABC):
         raise NotImplementedError
 
     @abstractmethod
-    def forward(self, data: tuple, scaler: GradScaler | None, amp: bool = True):
+    def forward(self, data: tuple, scaler: GradScaler | None):
         raise NotImplementedError
 
     @abstractmethod
@@ -104,7 +104,7 @@ class CTCNetwork(ABC):
             images = images.to(self.device)
 
             with torch.no_grad():
-                loss = self.forward(data, self.scaler, self.amp)
+                loss = self.forward(data, self.scaler)
                 val_ctc_losses.append(loss / images.size(0))
 
         val_loss = torch.mean(torch.tensor(val_ctc_losses))
@@ -130,7 +130,7 @@ class CTCNetwork(ABC):
         self.model.eval()
 
         model_input = torch.randn(self.get_input_shape(), device=self.device)
-
+        print(f"Exporting ONNX for model input shape: {model_input.shape}")
         """
         model_input = torch.randn(
             [1, 1, self.image_height, self.image_width], device=self.device
@@ -140,16 +140,15 @@ class CTCNetwork(ABC):
 
         torch.onnx.export(
             self.model,
-            model_input,  # type: ignore
+            model_input,
             out_file,
-            export_params=True,
-            opset_version=opset,
-            verbose=False,
-            dynamo=False,
-            do_constant_folding=True,
+            opset_version=18,
             input_names=["input"],
             output_names=["output"],
-            dynamic_axes={"input": {0: "batch_size"}, "output": {0: "batch_size"}},
+            dynamic_axes={
+                "input": {0: "batch"}
+            },
+            do_constant_folding=False,
         )
 
         self.model.to(self.device)
@@ -205,7 +204,7 @@ class CRNNNetwork(CTCNetwork):
                     print(f"Unfreezing layer: {param[0]}")
                     param[1].data.requires_grad = True
 
-    def forward(self, data, scaler, amp):
+    def forward(self, data, scaler: GradScaler):
         images, targets, target_lengths, _ = data
 
         images = images.to(self.device)
@@ -231,7 +230,7 @@ class CRNNNetwork(CTCNetwork):
     ):
         self.model.train()
 
-        loss = self.forward(data_batch, self.scaler, self.amp)
+        loss = self.forward(data_batch, self.scaler)
 
         self.optimizer.zero_grad()
         loss.backward()
@@ -335,7 +334,7 @@ class EasterNetwork(CTCNetwork):
     def load_model(self, checkpoint_path: str):
         self.load_checkpoint(checkpoint_path, self.device_str)
 
-    def forward(self, data, scaler, amp):
+    def forward(self, data, scaler: GradScaler):
         images, targets, target_lengths, _ = data
         images = torch.squeeze(images).to(self.device)
         targets = targets.to(self.device)
@@ -361,7 +360,7 @@ class EasterNetwork(CTCNetwork):
     ):
         self.model.train()
 
-        loss = self.forward(data_batch, self.scaler, self.amp)
+        loss = self.forward(data_batch, self.scaler)
 
         self.optimizer.zero_grad()
         loss.backward()
@@ -425,7 +424,7 @@ class Easter2AttNetwork(CTCNetwork):
     def get_input_shape(self):
         return [self.num_classes, self.image_height, self.image_width]
 
-    def forward(self, data, scaler):
+    def forward(self, data: GradScaler, scaler: bool):
         images, targets, target_lengths, _ = data
 
         images = images.to(self.device)
@@ -524,29 +523,27 @@ class Easter2AttNetwork(CTCNetwork):
         self, out_dir: str, model_name: str = "model", opset: int = 18
     ) -> None:
 
-        device = torch.device("cpu")
-        self.model.to(device)
+        cpu_device = torch.device("cpu")
+        self.model.to(cpu_device)
         self.model.eval()
 
-        _, input_height, input_width = self.get_input_shape()
-        dummy_input = torch.randn(1, 1, input_height, input_width, dtype=torch.float32)
-
-        """
         model_input = torch.randn(
-            [1, 1, self.image_height, self.image_width], device=self.device
+            [1, 1, self.image_height, self.image_width], device=cpu_device
         )
-        """
+
         out_file = f"{out_dir}/{model_name}.onnx"
 
         torch.onnx.export(
             self.model,
-            dummy_input,
+            model_input,
             out_file,
-            export_params=True,
-            opset_version=opset,
-            do_constant_folding=True,
-            input_names=["image"],
-            output_names=["logits"],
+            opset_version=18,
+            input_names=["input"],
+            output_names=["output"],
+            dynamic_shapes={
+                "x": {0: "batch"}
+            },
+            do_constant_folding=False,
         )
 
         self.model.to(self.device)
@@ -576,7 +573,7 @@ class Easter2ViTNetwork(CTCNetwork):
         assert vit_cfg is not None
 
         cnn = ConvFrontEnd(out_ch=64, input_height=image_height)
-        backbone = Easter2b(input_height=64*(image_height//4))
+        backbone = Easter2b(input_height=64*(image_height//4), vocab_size=num_classes)
         model = Easter2PlusViT(cnn, backbone, vit_cfg, vocab_size=num_classes)
 
         super().__init__(
@@ -593,7 +590,7 @@ class Easter2ViTNetwork(CTCNetwork):
     def get_input_shape(self):
         return [self.num_classes, self.image_height, self.image_width]
 
-    def forward(self, data, scaler):
+    def forward(self, data: torch.Tensor, scaler: GradScaler):
         images, targets, target_lengths, _ = data
 
         images = images.to(self.device)
@@ -691,7 +688,11 @@ class Easter2ViTNetwork(CTCNetwork):
         self.model.eval()
 
         _, input_height, input_width = self.get_input_shape()
-        dummy_input = torch.randn(1, 1, input_height, input_width, dtype=torch.float32)
+        model_input = torch.randn(
+            1, 1, input_height, input_width,
+            dtype=torch.float32,
+            device="cpu"
+        )
 
         """
         model_input = torch.randn(
@@ -702,13 +703,15 @@ class Easter2ViTNetwork(CTCNetwork):
 
         torch.onnx.export(
             self.model,
-            dummy_input,
+            model_input,
             out_file,
-            export_params=True,
-            opset_version=opset,
-            do_constant_folding=True,
-            input_names=["image"],
+            opset_version=18,
+            input_names=["input"],
             output_names=["logits"],
+            dynamic_shapes={
+                "x": {0: "batch"}
+            },
+            do_constant_folding=False,
         )
 
         self.model.to(self.device)

@@ -1,3 +1,4 @@
+import os
 import cv2
 from typing import Optional
 
@@ -11,6 +12,10 @@ from BudaOCR.Utils import binarize, pad_ocr_line
 
 
 class CTCDataset(Dataset):
+    """
+    Dataset used within the training pipeline
+    """
+
     def __init__(
         self,
         images: list,
@@ -73,3 +78,51 @@ def ctc_collate_fn(batch):
     targets = torch.cat(targets, 0)
     target_lengths = torch.cat(target_lengths, 0)
     return images, targets, target_lengths, gt_labels
+
+
+
+class ImageInferenceDataset(Dataset):
+    """
+    Dataset used within for inference.
+    """
+
+    def __init__(
+        self,
+        images: list[str],
+        labels: list[str],
+        label_encoder: LabelEncoder,
+        binarize_images: bool = True
+    ):
+        self.images = images
+        self.labels = labels
+        self.label_encoder = label_encoder
+        self.binarize_images = binarize_images
+
+        assert len(images) == len(labels)
+        
+    def __len__(self):
+        return len(self.images)
+    
+    def get_item(self, idx):
+         return self.__getitem__(idx)
+
+    def __getitem__(self, idx):
+        image = cv2.imread(self.images[idx])
+
+        if image is None:
+            Exception(f"error reading image: {self.images[idx]}")
+            return None
+
+        if self.binarize_images:
+            image = binarize(image)
+
+
+        label = self.label_encoder.read_label(self.labels[idx])
+
+        return image, label
+    
+
+def inference_collate_fn(batch):
+    images, labels = zip(*batch)
+    images = torch.stack(images, 0)
+    return images, labels
