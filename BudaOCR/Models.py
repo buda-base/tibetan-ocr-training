@@ -802,7 +802,7 @@ class Easter2Attention(nn.Module):
             print("Using Easter2 standard")
         else:
             self.backbone = Easter2b(
-                input_height=easter_in_ch, vocab_size=vocab_size
+                input_height=easter_in_ch, vocab_size=vocab_size, apply_activation=False
             )
             print("Using Easter2 Fixed")
 

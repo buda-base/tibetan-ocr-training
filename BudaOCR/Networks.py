@@ -573,7 +573,7 @@ class Easter2ViTNetwork(CTCNetwork):
         assert vit_cfg is not None
 
         cnn = ConvFrontEnd(out_ch=64, input_height=image_height)
-        backbone = Easter2b(input_height=64*(image_height//4), vocab_size=num_classes)
+        backbone = Easter2b(input_height=64*(image_height//4), vocab_size=num_classes, apply_activation=False)
         model = Easter2PlusViT(cnn, backbone, vit_cfg, vocab_size=num_classes)
 
         super().__init__(
@@ -703,13 +703,13 @@ class Easter2ViTNetwork(CTCNetwork):
 
         torch.onnx.export(
             self.model,
-            model_input,
+            (model_input,),  
             out_file,
             opset_version=18,
             input_names=["input"],
             output_names=["logits"],
             dynamic_shapes={
-                "x": {0: "batch"}
+                "x": {0: "batch", 3: "width"}   # <-- MUST be "x"
             },
             do_constant_folding=False,
         )
