@@ -19,16 +19,7 @@ from natsort import natsorted
 from sklearn.model_selection import train_test_split
 from botok import normalize_unicode
 
-from BudaOCR.Data import CTCModelConfig, DatasetDistribution
-
-
-class Labelformat(Enum):
-    t_unicode = 0
-    wylie = 1
-
-class TargetEncoding(Enum):
-    stacks = 0,
-    wyile = 1
+from BudaOCR.Data import CTCModelConfig, DatasetDistribution, Encoding, KenLMConfig
 
 
 def show_image(
@@ -41,6 +32,7 @@ def show_image(
         plt.imshow(image, cmap=cmap)
     else:
         plt.imshow(image)
+
 
 def create_dir(dir_path: str) -> None:
     try:
@@ -66,21 +58,6 @@ def read_stack_file(file_path: str) -> list[str]:
         return list(set(stacks))
 
 
-def read_ocr_model_config(config_file: str):
-    model_dir = os.path.dirname(config_file)
-    file = open(config_file, encoding="utf-8")
-    json_content = json.loads(file.read())
-
-    checkpoint = f"{model_dir}/{json_content['checkpoint']}"
-    architecture = json_content["architecture"]
-    input_width = json_content["input_width"]
-    input_height = json_content["input_height"]
-    charset = json_content["charset"]
-    encoder = json_content["encoding"]
-
-    return checkpoint, architecture, encoder, input_width, input_height, charset
-
-
 def read_distribution(distribution_file: str) -> DatasetDistribution | None:
     with open(distribution_file, "r", encoding="utf-8") as f:
         content = f.read()
@@ -91,22 +68,41 @@ def read_distribution(distribution_file: str) -> DatasetDistribution | None:
             valid_samples = content["validation"]
             test_samples = content["test"]
 
-            train_distribution = DatasetDistribution(train_samples=train_samples, val_samples=valid_samples, test_samples=test_samples)
+            train_distribution = DatasetDistribution(
+                train_samples=train_samples,
+                val_samples=valid_samples,
+                test_samples=test_samples,
+            )
 
             return train_distribution
         else:
-            logging.error("Data distribution is missing the required keys 'train' and 'validation' and 'test'.")
+            logging.error(
+                "Data distribution is missing the required keys 'train' and 'validation' and 'test'."
+            )
             return None
-      
 
-def build_data_paths(data_root: str, img_file_ext: str = "jpg") -> tuple[list[str], list[str]]:
+
+def save_json(out_file: str, data: list):
+    try:
+        with open(out_file, "w", encoding="UTF-8") as f:
+            json.dump(data, f, ensure_ascii=False, indent=1)
+
+    except BaseException as e:
+        print(f"Failed to save json: {e}")
+
+
+def build_data_paths(
+    data_root: str, img_file_ext: str = "jpg"
+) -> tuple[list[str], list[str]]:
     _images = natsorted(glob(f"{data_root}/lines/*.{img_file_ext}"))
     _labels = natsorted(glob(f"{data_root}/transcriptions/*.txt"))
 
     return _images, _labels
 
 
-def build_distribution_paths(data_path: str, samples: list[str]) -> tuple[list[str], list[str]]:
+def build_distribution_paths(
+    data_path: str, samples: list[str]
+) -> tuple[list[str], list[str]]:
     images = []
     labels = []
 
@@ -125,7 +121,7 @@ def build_distribution_paths(data_path: str, samples: list[str]) -> tuple[list[s
 
 
 def assemble_data_paths(data_root: Path):
-    assert (os.path.isdir(data_root))
+    assert os.path.isdir(data_root)
 
     image_paths = []
     label_paths = []
@@ -140,7 +136,6 @@ def assemble_data_paths(data_root: Path):
             label_paths.extend(_labels)
 
     return image_paths, label_paths
-
 
 
 def build_distribution_from_directory(data_dir: str) -> dict:
@@ -161,11 +156,11 @@ def build_distribution_from_directory(data_dir: str) -> dict:
         _images = natsorted(glob(f"{sub_dir}/lines/*.jpg"))
         _labels = natsorted(glob(f"{sub_dir}/transcriptions/*.txt"))
         print(f"{sub_dir.name} => Images: {len(_images)}, Labels: {len(_labels)}")
-        #_images = [x for x in _images if os.stat(x).st_size >= 3000]
-        #_labels = [x for x in _labels if os.stat(x).st_size != 0] 
+        # _images = [x for x in _images if os.stat(x).st_size >= 3000]
+        # _labels = [x for x in _labels if os.stat(x).st_size != 0]
 
-        if (len(_images) != len(_labels)):
-        
+        if len(_images) != len(_labels):
+
             image_list = list(map(get_filename, _images))
             labels_list = list(map(get_filename, _labels))
 
@@ -186,7 +181,9 @@ def build_distribution_from_directory(data_dir: str) -> dict:
                 print(f"Warning: Label name mismatch: {img} => {lbl} ")
 
         _images, _labels = shuffle_data(_images, _labels)
-        train_images, train_labels, val_images, val_labels, test_images, test_labels = split_dataset(_images, _labels)
+        train_images, train_labels, val_images, val_labels, test_images, test_labels = (
+            split_dataset(_images, _labels)
+        )
 
         all_train_images.extend(train_images)
         all_train_labels.extend(train_labels)
@@ -199,15 +196,23 @@ def build_distribution_from_directory(data_dir: str) -> dict:
         print(f"Val Images: {len(val_images)}, Val Labels: {len(val_labels)}")
         print(f"Test Images: {len(test_images)}, Test Labels: {len(test_labels)}")
 
-        all_train_images, all_train_labels = shuffle_data(all_train_images, all_train_labels)
-        all_valid_images, all_valid_labels = shuffle_data(all_valid_images, all_valid_labels)
-        all_test_images, all_test_labels = shuffle_data(all_test_images, all_test_labels)
+        all_train_images, all_train_labels = shuffle_data(
+            all_train_images, all_train_labels
+        )
+        all_valid_images, all_valid_labels = shuffle_data(
+            all_valid_images, all_valid_labels
+        )
+        all_test_images, all_test_labels = shuffle_data(
+            all_test_images, all_test_labels
+        )
 
         validate_split(all_train_images, all_train_labels)
         validate_split(all_valid_images, all_valid_labels)
         validate_split(all_test_images, all_test_labels)
 
-    save_distribution(all_train_images, all_valid_images, all_test_images, output_dir=str(data_path))
+    save_distribution(
+        all_train_images, all_valid_images, all_test_images, output_dir=str(data_path)
+    )
 
     distribution = {}
     distribution["train_images"] = all_train_images
@@ -220,7 +225,9 @@ def build_distribution_from_directory(data_dir: str) -> dict:
     return distribution
 
 
-def accumulate_distributions(data_path: str, datasets: list[str]) -> dict[str, list[str]] | None:
+def accumulate_distributions(
+    data_path: str, datasets: list[str]
+) -> dict[str, list[str]] | None:
     all_train_images = []
     all_train_labels = []
 
@@ -229,7 +236,6 @@ def accumulate_distributions(data_path: str, datasets: list[str]) -> dict[str, l
 
     all_test_images = []
     all_test_labels = []
-
 
     for dataset in datasets:
         sub_dir = os.path.join(data_path, dataset)
@@ -243,10 +249,15 @@ def accumulate_distributions(data_path: str, datasets: list[str]) -> dict[str, l
         if data_distribution is None:
             return None
 
-        train_images, train_labels = build_distribution_paths(sub_dir, data_distribution.train_samples)
-        val_images, val_labels = build_distribution_paths(sub_dir, data_distribution.val_samples)
-        test_images, test_labels = build_distribution_paths(sub_dir, data_distribution.test_samples)
-
+        train_images, train_labels = build_distribution_paths(
+            sub_dir, data_distribution.train_samples
+        )
+        val_images, val_labels = build_distribution_paths(
+            sub_dir, data_distribution.val_samples
+        )
+        test_images, test_labels = build_distribution_paths(
+            sub_dir, data_distribution.test_samples
+        )
 
         all_train_images.extend(train_images)
         all_train_labels.extend(train_labels)
@@ -257,7 +268,9 @@ def accumulate_distributions(data_path: str, datasets: list[str]) -> dict[str, l
         all_test_images.extend(test_images)
         all_test_labels.extend(test_labels)
 
-    all_train_images, all_train_labels = shuffle_data(all_train_images, all_train_labels)
+    all_train_images, all_train_labels = shuffle_data(
+        all_train_images, all_train_labels
+    )
     all_val_images, all_val_labels = shuffle_data(all_val_images, all_val_labels)
     all_test_images, all_test_labels = shuffle_data(all_test_images, all_test_labels)
 
@@ -272,15 +285,23 @@ def accumulate_distributions(data_path: str, datasets: list[str]) -> dict[str, l
     return distribution
 
 
-def build_distribution_from_file(distribution_file: str, data_root: str) -> dict[str, list[str]] | None:
+def build_distribution_from_file(
+    distribution_file: str, data_root: str
+) -> dict[str, list[str]] | None:
     data_distribution = read_distribution(distribution_file)
 
     if data_distribution is None:
         return None
 
-    train_images, train_labels = build_distribution_paths(data_root, data_distribution.train_samples)
-    val_images, val_labels = build_distribution_paths(data_root, data_distribution.val_samples)
-    test_images, test_labels = build_distribution_paths(data_root, data_distribution.test_samples)
+    train_images, train_labels = build_distribution_paths(
+        data_root, data_distribution.train_samples
+    )
+    val_images, val_labels = build_distribution_paths(
+        data_root, data_distribution.val_samples
+    )
+    test_images, test_labels = build_distribution_paths(
+        data_root, data_distribution.test_samples
+    )
 
     distribution = {}
     distribution["train_images"] = train_images
@@ -293,9 +314,14 @@ def build_distribution_from_file(distribution_file: str, data_root: str) -> dict
     return distribution
 
 
-def save_distribution(train_images: list[str], valid_images: list[str], test_images: list[str], output_dir: str):
-    assert (os.path.isdir(output_dir))
-    
+def save_distribution(
+    train_images: list[str],
+    valid_images: list[str],
+    test_images: list[str],
+    output_dir: str,
+):
+    assert os.path.isdir(output_dir)
+
     out_file = os.path.join(output_dir, "data.distribution")
 
     distribution = {}
@@ -325,9 +351,19 @@ def save_distribution(train_images: list[str], valid_images: list[str], test_ima
     print(f"Saved data distribution to: {out_file}")
 
 
-def split_dataset(images: list[str], labels: list[str], train_val_split: float = 0.2, val_test_split: float = 0.5, seed: int = 42):
-    train_images, valtest_images, train_labels, valtest_labels = train_test_split(images, labels, test_size=train_val_split, random_state=seed)
-    val_images, test_images, val_labels, test_labels = train_test_split(valtest_images, valtest_labels, test_size=val_test_split, random_state=seed)
+def split_dataset(
+    images: list[str],
+    labels: list[str],
+    train_val_split: float = 0.2,
+    val_test_split: float = 0.5,
+    seed: int = 42,
+):
+    train_images, valtest_images, train_labels, valtest_labels = train_test_split(
+        images, labels, test_size=train_val_split, random_state=seed
+    )
+    val_images, test_images, val_labels, test_labels = train_test_split(
+        valtest_images, valtest_labels, test_size=val_test_split, random_state=seed
+    )
 
     return train_images, train_labels, val_images, val_labels, test_images, test_labels
 
@@ -595,7 +631,7 @@ def postprocess_wylie_label(label: str) -> str:
     label = label.replace("]", "")
     label = label.replace(" ", "§")  # specific encoding for the tsheg
 
-    #label = re.sub(r"[\[(].*?[\])]", "", label)
+    # label = re.sub(r"[\[(].*?[\])]", "", label)
     return label
 
 
@@ -604,7 +640,7 @@ def read_data(
     label_list: list,
     converter,
     min_label_length: int = 30,
-    max_label_length: int = 320
+    max_label_length: int = 320,
 ) -> tuple[list[str], list[str]]:
     """
     Reads all labels into memory(!), filter labels for min_label_length and max_label_length.
@@ -630,9 +666,8 @@ def read_data(
             if "\\u" not in label:  # filter out improperly converted unicode signs
                 labels.append(label)
                 images.append(image_path)
-  
-    return images, labels
 
+    return images, labels
 
 
 def read_ctc_model_config(config_file: str) -> CTCModelConfig:
@@ -641,7 +676,7 @@ def read_ctc_model_config(config_file: str) -> CTCModelConfig:
     json_content = json.loads(file.read())
 
     checkpoint = f"{model_dir}/{json_content['checkpoint']}"
-    onnx_model_file = f"{model_dir}/{json_content['onnx-model']}"
+    onnx_file = f"{model_dir}/{json_content['onnx-model']}"
     architecture = json_content["architecture"]
     input_width = json_content["input_width"]
     input_height = json_content["input_height"]
@@ -651,11 +686,17 @@ def read_ctc_model_config(config_file: str) -> CTCModelConfig:
         True if json_content["squeeze_channel_dim"] == "yes" else False
     )
     swap_hw = True if json_content["swap_hw"] == "yes" else False
-    characters = json_content["charset"]
+    add_blank = True if json_content["add_blank"] == "yes" else False
+    encoding = (
+        Encoding.WYLIE
+        if str(json_content["encoding"]).lower() == "wylie"
+        else Encoding.UNICODE
+    )
+    charset = json_content["charset"]
 
     config = CTCModelConfig(
         checkpoint,
-        onnx_model_file,
+        onnx_file,
         architecture,
         input_width,
         input_height,
@@ -663,7 +704,50 @@ def read_ctc_model_config(config_file: str) -> CTCModelConfig:
         output_layer,
         squeeze_channel_dim,
         swap_hw,
-        characters,
+        add_blank,
+        encoding,
+        charset,
     )
 
     return config
+
+
+def parse_arpa_unigrams(arpa_path: str | Path) -> list[str] | None:
+    """
+    Extract unigram symbols from a KenLM ARPA file.
+    """
+    unigrams = []
+    in_1grams = False
+
+    with open(arpa_path, "r", encoding="utf-8") as f:
+        for line in f:
+            line = line.strip()
+
+            if line == r"\1-grams:":
+                in_1grams = True
+                continue
+
+            if in_1grams and line.startswith("\\"):
+                break
+
+            if in_1grams:
+                if not line or line.startswith("#"):
+                    continue
+
+                # Format: <logprob> <token> [<backoff>]
+                parts = line.split()
+                if len(parts) >= 2:
+                    token = parts[1]
+                    unigrams.append(token)
+
+    if not unigrams:
+        print("No valid unigrams found")
+        return None
+
+    return unigrams
+
+
+def get_kenlm_config(model_path: str | Path, arpa_file: str | Path) -> KenLMConfig:
+    unigrams = parse_arpa_unigrams(arpa_file)
+
+    return KenLMConfig(model_path, arpa_file, unigrams)

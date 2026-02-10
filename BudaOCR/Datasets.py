@@ -80,10 +80,9 @@ def ctc_collate_fn(batch):
     return images, targets, target_lengths, gt_labels
 
 
-
-class ImageInferenceDataset(Dataset):
+class InferenceDataset(Dataset):
     """
-    Dataset used within for inference.
+    Dataset for inference.
     """
 
     def __init__(
@@ -91,20 +90,24 @@ class ImageInferenceDataset(Dataset):
         images: list[str],
         labels: list[str],
         label_encoder: LabelEncoder,
-        binarize_images: bool = True
+        img_height: int = 100,
+        img_width: int = 3200,
+        binarize_images: bool = True,
     ):
         self.images = images
         self.labels = labels
+        self.img_height = img_height
+        self.img_width = img_width
         self.label_encoder = label_encoder
         self.binarize_images = binarize_images
 
         assert len(images) == len(labels)
-        
+
     def __len__(self):
         return len(self.images)
-    
+
     def get_item(self, idx):
-         return self.__getitem__(idx)
+        return self.__getitem__(idx)
 
     def __getitem__(self, idx):
         image = cv2.imread(self.images[idx])
@@ -116,11 +119,15 @@ class ImageInferenceDataset(Dataset):
         if self.binarize_images:
             image = binarize(image)
 
+        image = cv2.cvtColor(image, cv2.COLOR_RGB2GRAY)
+        image = pad_ocr_line(image, self.img_width, self.img_height)
+        image = (image / 127.5) - 1.0
+        image = torch.FloatTensor(image)
 
         label = self.label_encoder.read_label(self.labels[idx])
 
         return image, label
-    
+
 
 def inference_collate_fn(batch):
     images, labels = zip(*batch)

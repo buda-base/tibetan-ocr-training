@@ -323,7 +323,7 @@ class OCRTrainer:
             ),
             "swap_hw": "no" if "Easter" in self.network.architecture  else "yes",
             "add_blank" : "yes",
-            "encoder": self.label_encoder.name,
+            "encoding": self.label_encoder.name,
             "charset": charset,
         }
 

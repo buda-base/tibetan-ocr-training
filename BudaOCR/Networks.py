@@ -11,7 +11,14 @@ from torch import nn
 from torch.amp.grad_scaler import GradScaler
 
 from BudaOCR.Data import VitConfig
-from BudaOCR.Models import ConvFrontEnd, Easter2, Easter2Attention, Easter2PlusViT, Easter2b, VanillaCRNN
+from BudaOCR.Models import (
+    ConvFrontEnd,
+    Easter2,
+    Easter2Attention,
+    Easter2PlusViT,
+    Easter2b,
+    VanillaCRNN,
+)
 
 
 class CTCNetwork(ABC):
@@ -28,9 +35,15 @@ class CTCNetwork(ABC):
     ) -> None:
 
         if torch.cuda.is_available():
+            print("Using CUDA compute backend")
             self.device = torch.device("cuda:0")
             self.device_str = "cuda"
+        elif torch.mps.is_available():
+            print("Using MPS compute backend")
+            self.device = torch.device("mps")
+            self.device_str = "mps"
         else:
+            print("Using CPU compute backend")
             self.device = torch.device("cpu")
             self.device_str = "cpu"
 
@@ -59,7 +72,6 @@ class CTCNetwork(ABC):
     @abstractmethod
     def get_input_shape(self) -> list[int]:
         raise NotImplementedError
-    
 
     def reset_optimizer(self):
         self.optimizer.state.clear()
@@ -114,13 +126,19 @@ class CTCNetwork(ABC):
     def load_checkpoint(self, checkpoint_path: str, device: str = "cuda"):
 
         if device == "cpu":
-            map_location=torch.device('cpu')
+            map_location = torch.device("cpu")
             checkpoint = torch.load(checkpoint_path, map_location)
 
-        # assuming CUDA by default
-        else:
+        elif device == "mps":
+            map_location = torch.device("cpu")
+            checkpoint = torch.load(checkpoint_path, map_location)
+
+        elif device == "cuda":
             checkpoint = torch.load(checkpoint_path)
-            
+
+        else:
+            raise ValueError("No valid device provided to load the Checkpoint")
+
         self.model.load_state_dict(checkpoint["state_dict"])
         self.optimizer.load_state_dict(checkpoint["optimizer"])
 
@@ -145,18 +163,18 @@ class CTCNetwork(ABC):
             opset_version=18,
             input_names=["input"],
             output_names=["output"],
-            dynamic_axes={
-                "input": {0: "batch"}
-            },
+            dynamic_axes={"input": {0: "batch"}},
             do_constant_folding=False,
         )
 
         self.model.to(self.device)
         print(f"Onnx file exported to: {out_file}")
 
+
 """
 CRNN
 """
+
 
 class CRNNNetwork(CTCNetwork):
     def __init__(
@@ -241,7 +259,7 @@ class CRNNNetwork(CTCNetwork):
 
         return loss.item()
 
-    def test(self, data: tuple, all_data: bool = False):
+    def test(self, data: tuple):
         self.model.eval()
 
         images, targets, target_lengths, gt_labels = data
@@ -266,6 +284,7 @@ class CRNNNetwork(CTCNetwork):
 """
 Easter2 (original)
 """
+
 
 class EasterNetwork(CTCNetwork):
     def __init__(
@@ -294,7 +313,6 @@ class EasterNetwork(CTCNetwork):
 
         else:
             raise ValueError("Undefined Easter2 variant provided")
-        
 
         super().__init__(
             self.model,
@@ -372,6 +390,8 @@ class EasterNetwork(CTCNetwork):
         return loss.item()
 
     def test(self, data: tuple) -> tuple[NDArray, list[str]]:
+        self.model.eval()
+
         images, targets, target_lengths, gt_labels = data
 
         images = torch.squeeze(images).to(self.device)
@@ -459,13 +479,13 @@ class Easter2AttNetwork(CTCNetwork):
 
             return self.criterion(log_probs, targets, input_lengths, target_lengths)
 
-    def fine_tune(self, checkpoint_path: str): # TODO
+    def fine_tune(self, checkpoint_path: str):  # TODO
         pass
 
     def train_step(
         self,
         data_batch: torch.Tensor,
-        clip_grads: bool = True, # TODO
+        clip_grads: bool = True,  # TODO
         grad_clip: float = 5.0,
     ):
         self.model.train()
@@ -487,7 +507,7 @@ class Easter2AttNetwork(CTCNetwork):
         return loss.item()
 
     def evaluate(self, data_loader, silent: bool):
-        val_ctc_losses = []
+        ctc_losses = []
         self.model.eval()
 
         for _, data in tqdm(
@@ -497,13 +517,15 @@ class Easter2AttNetwork(CTCNetwork):
             images = images.to(self.device)
             with torch.no_grad():
                 loss = self.forward(data, self.scaler)
-                val_ctc_losses.append(loss.item())
+                ctc_losses.append(loss.item())
 
-        val_loss = torch.mean(torch.tensor(val_ctc_losses))
+        mean_loss = torch.mean(torch.tensor(ctc_losses))
 
-        return val_loss.item()
+        return mean_loss.item()
 
     def test(self, data: tuple) -> tuple[NDArray, list[str]]:
+        self.model.eval()
+
         images, targets, target_lengths, gt_labels = data
 
         images = images.to(self.device)
@@ -540,18 +562,18 @@ class Easter2AttNetwork(CTCNetwork):
             opset_version=18,
             input_names=["input"],
             output_names=["output"],
-            dynamic_shapes={
-                "x": {0: "batch"}
-            },
+            dynamic_shapes={"x": {0: "batch"}},
             do_constant_folding=False,
         )
 
         self.model.to(self.device)
         print(f"Exported ONNX model to {out_file}")
 
+
 """
 An Easter2 variant with ViT.
 """
+
 
 class Easter2ViTNetwork(CTCNetwork):
     """
@@ -573,7 +595,11 @@ class Easter2ViTNetwork(CTCNetwork):
         assert vit_cfg is not None
 
         cnn = ConvFrontEnd(out_ch=64, input_height=image_height)
-        backbone = Easter2b(input_height=64*(image_height//4), vocab_size=num_classes, apply_activation=False)
+        backbone = Easter2b(
+            input_height=64 * (image_height // 4),
+            vocab_size=num_classes,
+            apply_activation=False,
+        )
         model = Easter2PlusViT(cnn, backbone, vit_cfg, vocab_size=num_classes)
 
         super().__init__(
@@ -606,8 +632,8 @@ class Easter2ViTNetwork(CTCNetwork):
                 out = log_probs
             # main_logits: (B, V, T)
             # CTC expects (T, N, C) -> so permute and take log_softmax across C
-            #main_logits = main_logits.float()
-            #log_probs = main_logits.log_softmax(dim=1)  # (B, V, T)
+            # main_logits = main_logits.float()
+            # log_probs = main_logits.log_softmax(dim=1)  # (B, V, T)
             out = log_probs.permute(2, 0, 1)  # (T, B, V)
 
             # compute input_lengths: model-specific. We approximate by T for each batch (no downsampling info)
@@ -664,6 +690,7 @@ class Easter2ViTNetwork(CTCNetwork):
         return val_loss.item()
 
     def test(self, data: tuple) -> tuple[NDArray, list[str]]:
+        self.model.eval()
         images, targets, target_lengths, gt_labels = data
 
         images = images.to(self.device)
@@ -689,9 +716,7 @@ class Easter2ViTNetwork(CTCNetwork):
 
         _, input_height, input_width = self.get_input_shape()
         model_input = torch.randn(
-            1, 1, input_height, input_width,
-            dtype=torch.float32,
-            device="cpu"
+            1, 1, input_height, input_width, dtype=torch.float32, device="cpu"
         )
 
         """
@@ -703,14 +728,12 @@ class Easter2ViTNetwork(CTCNetwork):
 
         torch.onnx.export(
             self.model,
-            (model_input,),  
+            (model_input,),
             out_file,
             opset_version=18,
             input_names=["input"],
             output_names=["logits"],
-            dynamic_shapes={
-                "x": {0: "batch", 3: "width"}   # <-- MUST be "x"
-            },
+            dynamic_shapes={"x": {0: "batch", 3: "width"}},  # <-- MUST be "x"
             do_constant_folding=False,
         )
 
