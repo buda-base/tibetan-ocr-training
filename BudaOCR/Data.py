@@ -1,8 +1,6 @@
 from enum import Enum
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Optional
-from uuid import UUID
 
 
 class Encoding(Enum):
@@ -16,7 +14,7 @@ class DatasetDistribution:
     val_samples: list[str]
     test_samples: list[str]
 
-
+    
 @dataclass
 class CTCModelConfig:
     checkpoint: str

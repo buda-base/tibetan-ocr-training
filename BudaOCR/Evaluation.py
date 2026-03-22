@@ -41,9 +41,10 @@ class Evaluator:
             self.label_encoder = StackEncoder(self.model_config.charset)
 
         if kenlm_config is not None:
-            self.ctc_decoder = CTCDecoder(self.model_config.charset, kenlm_config)
+            print(f"Using KenLM model")
+            self.ctc_decoder = CTCDecoder(self.model_config.charset, kenlm_config, add_blank=self.model_config.add_blank)
         else:
-            self.ctc_decoder = CTCDecoder(self.model_config.charset, kenlm_config=None)
+            self.ctc_decoder = CTCDecoder(self.model_config.charset, kenlm_config=None, add_blank=self.model_config.add_blank)
 
         
         if self.model_config.architecture == "Easter2PlusVit":
@@ -66,6 +67,14 @@ class Evaluator:
                 num_classes=self.label_encoder.num_classes,
             )
 
+        elif model_config.architecture == "Easter2":
+            self.network = self.network = EasterNetwork(
+                variant="Easter2",
+                image_width=self.model_config.input_width,
+                image_height=self.model_config.input_height,
+                num_classes=self.label_encoder.num_classes-1,
+            )
+
         self.network.load_checkpoint(self.model_config.checkpoint, self.device)
 
     def _build_dataloader(
@@ -84,12 +93,50 @@ class Evaluator:
             batch_size=batch_size,
             shuffle=False,
             collate_fn=ctc_collate_fn,
-            drop_last=True,
+            drop_last=False,
             num_workers=num_workers,
             persistent_workers=True,
         )
 
         return dataloader
+    
+    def run_inference(self, images: list[str], labels: list[str], num_workers: int = 4, batch_size: int = 8):
+        _it = [k for k in labels]
+        eval_labels = [self.label_encoder.read_label(token) for token in tqdm(_it)]
+
+        dataloader = self._build_dataloader(
+            images, eval_labels, batch_size, num_workers
+        )
+
+        results = []
+
+        for sample_idx, data in tqdm(enumerate(dataloader), total=len(dataloader)):  # type: ignore
+            logits, gt_labels = self.network.test(data)
+
+            for b_idx in range(logits.shape[0]):
+                pred = self.ctc_decoder.ctc_decode(logits[b_idx])
+                gt_label = gt_labels[b_idx]
+
+                if isinstance(gt_labels[b_idx], list):
+                    gt_label = "".join(x for x in gt_labels[b_idx])
+                else:
+                    gt_label = gt_labels[b_idx]
+
+                cer_score = self.cer_scorer.compute(
+                    predictions=[pred], references=[gt_label]
+                )
+
+                result = {
+                    "logits": logits[b_idx],
+                    "pred": pred,
+                    "label": gt_label,
+                    "cer": cer_score
+                }
+
+                results.append(result)
+
+        return results
+
 
     def evaluate(
         self,
@@ -140,6 +187,9 @@ class Evaluator:
                 }
 
                 results.append(score_set)
+
+        if len(self.label_encoder._missing_chars) > 0:
+            print(f"Warning: The evaluation data contained {len(self.label_encoder._missing_chars)} characters not covered my the character set uses by the encoder.s")
 
         return results
 

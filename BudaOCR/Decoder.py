@@ -11,9 +11,12 @@ class CTCDecoder:
         self,
         charset: str | list[str],
         kenlm_config: KenLMConfig | None,
+        add_blank: bool = True,
+        beam_width: int = 64
     ):
         self.blank_sign = " "
-        self.ctc_beam_width = 64
+        self.add_blank = add_blank
+        self.ctc_beam_width = beam_width
 
         if isinstance(charset, str):
             self.charset = list(charset)
@@ -21,7 +24,9 @@ class CTCDecoder:
             self.charset = charset
 
         self.ctc_vocab = self.charset.copy()
-        self.ctc_vocab.insert(0, " ")
+
+        if self.add_blank:
+            self.ctc_vocab.insert(0, " ")
 
         if kenlm_config is not None:
             try:

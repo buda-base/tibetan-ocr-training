@@ -34,6 +34,8 @@ class LabelEncoder(ABC):
         print(f"building ctcvocab: {len(self.ctc_vocab)}")
         self.ctc_decoder = CTCDecoder.build_ctcdecoder(self.ctc_vocab)
 
+        self._missing_chars = []
+
     @abstractmethod
     def read_label(self, label_path: str):
         raise NotImplementedError
@@ -49,6 +51,10 @@ class LabelEncoder(ABC):
     @property
     def num_classes(self) -> int:
         return len(self._charset)
+    
+    @property
+    def missing_chars(self) -> list[str]:
+        return self._missing_chars
 
     def encode(self, label: str):
         enc_lbl = []
@@ -57,7 +63,10 @@ class LabelEncoder(ABC):
                 enc_lbl.append(self._charset.index(x) + 1)
             else:
                 enc_lbl.append(-1)
-                print(f"WARNING: {x} not in charset")
+                
+                if x not in self._missing_chars:
+                    self._missing_chars.append(x)
+                #print(f"WARNING: {x} not in charset")
         return enc_lbl
 
     def decode(self, inputs: list[int]) -> str:
